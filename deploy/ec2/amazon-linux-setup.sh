@@ -318,6 +318,33 @@ else
     echo "⚠️  firewalld not found, skipping firewall configuration"
 fi
 
+# Cleanup installation files
+echo ""
+echo "🧹 Cleaning up installation files..."
+# Clean yum cache
+sudo yum clean all > /dev/null 2>&1
+
+# Clean pip cache
+pip cache purge > /dev/null 2>&1 || true
+
+# Remove any temporary files
+rm -f /tmp/chromedriver.zip 2>/dev/null || true
+rm -f /tmp/claude-agent.service 2>/dev/null || true
+
+# Clean up downloaded setup script if it exists
+rm -f ~/amazon-linux-setup.sh 2>/dev/null || true
+
+# Get disk space after cleanup
+FINAL_SPACE=$(df / | tail -1 | awk '{print $4}')
+FINAL_GB=$((FINAL_SPACE / 1024 / 1024))
+FREED_SPACE=$((FINAL_GB - AVAILABLE_GB))
+
+if [ $FREED_SPACE -gt 0 ]; then
+    echo "✅ Cleanup complete! Freed ${FREED_SPACE}GB of disk space"
+else
+    echo "✅ Cleanup complete!"
+fi
+
 echo ""
 echo "✅ Setup complete!"
 echo ""
