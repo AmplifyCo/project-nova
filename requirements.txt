@@ -32,6 +32,10 @@ alembic>=1.13.1
 cryptography>=41.0.7
 pyjwt>=2.8.0
 
+# Vulnerability Scanning & Auto-Update
+pip-audit>=2.6.1
+safety>=3.0.1
+
 # Web Server & API
 fastapi>=0.109.0
 uvicorn>=0.25.0

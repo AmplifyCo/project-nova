@@ -8,6 +8,8 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import yaml
+
 from src.core.config import load_config
 from src.core.agent import AutonomousAgent
 from src.core.brain.core_brain import CoreBrain
@@ -17,6 +19,7 @@ from src.core.spawner.orchestrator import Orchestrator
 from src.integrations.anthropic_client import AnthropicClient
 from src.utils.telegram_notifier import TelegramNotifier, TelegramCommandHandler
 from src.utils.dashboard import Dashboard
+from src.utils.auto_updater import AutoUpdater
 
 # Setup logging
 logging.basicConfig(
@@ -69,23 +72,38 @@ async def main():
         agent_factory = AgentFactory(api_client, config)
         orchestrator = Orchestrator(agent_factory)
 
+        # Initialize auto-updater
+        logger.info("🔄 Initializing auto-updater...")
+        yaml_config = {}
+        config_path = Path("config/agent.yaml")
+        if config_path.exists():
+            with open(config_path, 'r') as f:
+                yaml_config = yaml.safe_load(f) or {}
+
+        auto_update_config = yaml_config.get("auto_update", {})
+        auto_updater = AutoUpdater(
+            bash_tool=agent.tools.get_tool("bash"),
+            telegram=telegram,
+            config=auto_update_config
+        )
+
         logger.info("\n✅ All systems initialized!")
         logger.info("\n" + "="*50)
         logger.info("Implemented Components:")
         logger.info("="*50)
         logger.info("  ✓ Configuration system")
         logger.info("  ✓ Anthropic API client")
-        logger.info("  ✓ Tool system (Bash, File, Web)")
+        logger.info("  ✓ Tool system (Bash, File, Web, Browser)")
         logger.info("  ✓ Dual brain architecture (coreBrain + DigitalCloneBrain)")
         logger.info("  ✓ Core agent execution loop")
         logger.info("  ✓ Sub-agent spawning system")
         logger.info("  ✓ Multi-agent orchestrator")
+        logger.info("  ✓ Auto-update system with vulnerability scanning")
+        logger.info("  ✓ Monitoring (Telegram + Dashboard)")
         logger.info("\n" + "="*50)
         logger.info("Still Needed:")
         logger.info("="*50)
         logger.info("  • Meta-agent self-builder")
-        logger.info("  • Monitoring (Telegram + Dashboard)")
-        logger.info("  • EC2 deployment scripts")
         logger.info("="*50)
 
         # Demo mode
@@ -108,15 +126,30 @@ async def main():
             logger.info(f"\n📱 Telegram notifications enabled")
             logger.info("   Send /start to your bot to interact")
 
+        # Show auto-update info
+        if auto_updater.enabled:
+            logger.info(f"\n🔄 Auto-update enabled")
+            logger.info(f"   Security-only: {auto_updater.security_only}")
+            logger.info(f"   Schedule: {auto_update_config.get('schedule', 'daily')}")
+            logger.info(f"   Auto-restart: {auto_updater.auto_restart}")
+
         # Keep running (for systemd service)
         logger.info("\n✅ Agent initialized and ready!")
         logger.info("Keeping process alive for systemd service...")
+
+        # Start auto-updater background task
+        auto_update_task = None
+        if auto_updater.enabled:
+            logger.info("🔄 Starting auto-update background task...")
+            auto_update_task = asyncio.create_task(auto_updater.start_background_task())
 
         # Keep alive indefinitely
         try:
             await asyncio.Future()  # Run forever
         except KeyboardInterrupt:
             logger.info("\n👋 Shutting down gracefully...")
+            if auto_update_task:
+                auto_update_task.cancel()
             await telegram.notify("Agent shutting down", level="warning")
 
     except Exception as e:

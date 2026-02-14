@@ -82,3 +82,20 @@ monitoring:
     enabled: true
     host: "0.0.0.0"
     port: 18789
+
+auto_update:
+  enabled: true
+  schedule: "daily"  # daily, weekly, or cron syntax
+  security_only: true  # Only update packages with security vulnerabilities
+  notify_telegram: true  # Send Telegram notifications about updates
+  auto_restart: true  # Restart agent after applying updates
+
+  packages:
+    system: true  # Update system packages (yum/apt)
+    python: true  # Update Python packages (pip)
+
+  vulnerability_scanning:
+    enabled: true
+    tools:
+      - pip-audit  # Primary scanner
+      - safety  # Fallback scanner

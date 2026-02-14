@@ -153,6 +153,19 @@ sudo mv /tmp/claude-agent.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable claude-agent
 
+# Configure automatic system updates
+echo "🔄 Configuring automatic security updates..."
+sudo yum install yum-cron -y
+sudo systemctl enable yum-cron
+sudo systemctl start yum-cron
+
+# Configure yum-cron for security-only updates
+sudo sed -i 's/update_cmd = default/update_cmd = security/' /etc/yum/yum-cron.conf 2>/dev/null || true
+sudo sed -i 's/apply_updates = no/apply_updates = yes/' /etc/yum/yum-cron.conf 2>/dev/null || true
+
+echo "✅ Automatic security updates enabled"
+echo "   System will auto-install security patches daily"
+
 # Configure firewall for web dashboard
 echo "🔥 Configuring firewall..."
 if command -v firewall-cmd &> /dev/null; then
@@ -200,4 +213,6 @@ echo "  ✅ Limited sudo for package installation"
 echo "  ✅ Web browsing (w3m text mode + Chromium headless)"
 echo "  ✅ Telegram notifications and commands"
 echo "  ✅ Web dashboard on port 18789"
+echo "  ✅ Automatic security updates (system + Python)"
+echo "  ✅ Daily vulnerability scanning"
 echo ""
