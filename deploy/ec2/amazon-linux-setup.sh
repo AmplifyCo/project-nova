@@ -12,21 +12,42 @@ sudo yum update -y
 echo "🐍 Installing Python 3.11 and browser tools..."
 sudo yum install python3.11 python3.11-pip git -y
 
-echo "🌐 Installing browser tools (chromium, w3m)..."
-sudo yum install chromium w3m curl -y
+echo "🌐 Installing browser tools (w3m, chromium)..."
+# Install w3m and curl (always available)
+sudo yum install w3m curl -y
 
-# Install ChromeDriver for Selenium
-echo "📦 Installing ChromeDriver..."
-CHROME_DRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE 2>/dev/null || echo "114.0.5735.90")
-wget -q -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROME_DRIVER_VERSION}/chromedriver_linux64.zip" 2>/dev/null || {
-    echo "⚠️  ChromeDriver download failed, will install via pip instead"
-    pip install webdriver-manager
-}
-if [ -f /tmp/chromedriver.zip ]; then
-    sudo unzip -q -o /tmp/chromedriver.zip -d /usr/local/bin/
-    sudo chmod +x /usr/local/bin/chromedriver
-    rm /tmp/chromedriver.zip
-    echo "✅ ChromeDriver installed: $(chromedriver --version 2>/dev/null || echo 'installed')"
+# Try to install chromium (may not be available on all Amazon Linux versions)
+if sudo yum install chromium -y 2>/dev/null; then
+    echo "✅ Chromium installed"
+else
+    echo "⚠️  Chromium not available in repositories"
+    echo "   Trying chromium-browser..."
+    if sudo yum install chromium-browser -y 2>/dev/null; then
+        echo "✅ Chromium-browser installed"
+    else
+        echo "⚠️  Chromium not available. Agent will use w3m for browsing."
+        echo "   Browser automation (Selenium) will be disabled."
+        echo "   Text-based browsing (w3m) will still work."
+    fi
+fi
+
+# Install ChromeDriver for Selenium (only if chromium is installed)
+if command -v chromium &> /dev/null || command -v chromium-browser &> /dev/null; then
+    echo "📦 Installing ChromeDriver for Selenium..."
+    CHROME_DRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE 2>/dev/null || echo "114.0.5735.90")
+    wget -q -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROME_DRIVER_VERSION}/chromedriver_linux64.zip" 2>/dev/null || {
+        echo "⚠️  ChromeDriver download failed"
+        echo "   Full browser automation may not work, but w3m text browsing will"
+    }
+    if [ -f /tmp/chromedriver.zip ]; then
+        sudo unzip -q -o /tmp/chromedriver.zip -d /usr/local/bin/
+        sudo chmod +x /usr/local/bin/chromedriver
+        rm /tmp/chromedriver.zip
+        echo "✅ ChromeDriver installed: $(chromedriver --version 2>/dev/null || echo 'installed')"
+    fi
+else
+    echo "⚠️  Chromium not installed, skipping ChromeDriver"
+    echo "   Agent will use text-based browsing (w3m) instead"
 fi
 
 # Clone repository (if not already cloned)
