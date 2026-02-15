@@ -6,23 +6,23 @@ aiofiles>=23.2.1
 
 # Multi-Channel Support
 python-telegram-bot>=21.0
-# discord.py>=2.3.2  # Optional: Discord integration (heavy dependency)
-# slack-bolt>=1.18.0  # Optional: Slack integration
-# slack-sdk>=3.27.0  # Optional: Slack integration
+discord.py>=2.3.2
+slack-bolt>=1.18.0
+slack-sdk>=3.27.0
 
-# Computer Use & Automation (Optional - disabled to save disk space)
-# pyautogui>=0.9.54
-# pillow>=10.0.0
-# mss>=9.0.1
+# Computer Use & Automation
+pyautogui>=0.9.54
+pillow>=10.0.0
+mss>=9.0.1
 
 # Browser Automation
-# selenium>=4.16.0  # Optional: Full browser automation (using w3m for now)
+selenium>=4.16.0
 beautifulsoup4>=4.12.0
 lxml>=5.1.0
 
 # Vector Database for Context Management
 chromadb>=0.4.22
-# sentence-transformers>=2.2.2  # Optional: Custom embeddings (requires PyTorch 915MB) - using chromadb defaults
+sentence-transformers>=2.2.2
 
 # State Management & Storage
 sqlalchemy>=2.0.23
