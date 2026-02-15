@@ -227,18 +227,107 @@ echo ""
 
 # Setup environment
 if [ ! -f .env ]; then
-    echo "⚙️  Setting up environment..."
-    cp .env.example .env
+    echo "⚙️  Creating .env file with placeholders..."
+    cat > .env << 'ENV_EOF'
+# ================================================
+# CORE CONFIGURATION - REQUIRED
+# ================================================
+
+# Anthropic API Key (REQUIRED - Get from: https://console.anthropic.com/)
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# Default models
+DEFAULT_MODEL=claude-opus-4-6
+SUBAGENT_MODEL=claude-sonnet-4-5
+
+# ================================================
+# AGENT SETTINGS
+# ================================================
+
+# Maximum iterations before stopping
+MAX_ITERATIONS=50
+
+# Thinking budget tokens
+THINKING_BUDGET=5000
+
+# Auto-execute mode (true/false)
+AUTO_EXECUTE=true
+
+# ================================================
+# BRAIN/MEMORY SETTINGS
+# ================================================
+
+# Vector database path
+VECTOR_DB_PATH=./data/chroma
+
+# Memory storage path
+MEMORY_PATH=./data/memory
+
+# ================================================
+# GIT INTEGRATION
+# ================================================
+
+# Auto-commit completed features
+AUTO_COMMIT=true
+
+# Git user info for commits
+GIT_USER_NAME=Autonomous Agent
+GIT_USER_EMAIL=agent@autonomous.ai
+
+# ================================================
+# TELEGRAM INTEGRATION (Optional but Recommended)
+# ================================================
+
+# Telegram Bot Token (Get from @BotFather on Telegram)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+
+# Telegram Chat ID (Get from @userinfobot on Telegram)
+TELEGRAM_CHAT_ID=your_telegram_chat_id_here
+
+# ================================================
+# WEB DASHBOARD
+# ================================================
+
+# Dashboard port
+DASHBOARD_PORT=18789
+
+# ================================================
+# LOGGING
+# ================================================
+
+# Log level (DEBUG, INFO, WARNING, ERROR)
+LOG_LEVEL=INFO
+
+# Log file path
+LOG_FILE=./data/logs/agent.log
+
+# ================================================
+# AUTO-UPDATE SETTINGS
+# ================================================
+
+# Enable automatic security updates
+AUTO_UPDATE_ENABLED=true
+
+# Update schedule (daily, weekly)
+AUTO_UPDATE_SCHEDULE=daily
+
+# Security-only updates
+AUTO_UPDATE_SECURITY_ONLY=true
+
+# Auto-restart after updates
+AUTO_UPDATE_RESTART=true
+ENV_EOF
+
+    echo "✅ Created .env file with placeholders"
     echo ""
-    echo "⚠️  IMPORTANT: Configure .env file with your credentials!"
+    echo "⚠️  IMPORTANT: Edit .env file with your credentials before starting!"
     echo "   nano .env"
     echo ""
     echo "Required settings:"
-    echo "  - ANTHROPIC_API_KEY (required)"
-    echo "  - TELEGRAM_BOT_TOKEN (optional but recommended)"
-    echo "  - TELEGRAM_CHAT_ID (optional but recommended)"
+    echo "  - ANTHROPIC_API_KEY (required - get from https://console.anthropic.com/)"
+    echo "  - TELEGRAM_BOT_TOKEN (optional but recommended - get from @BotFather)"
+    echo "  - TELEGRAM_CHAT_ID (optional but recommended - get from @userinfobot)"
     echo ""
-    read -p "Press Enter when .env is configured..."
 fi
 
 # Create directories
