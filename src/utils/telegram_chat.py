@@ -113,7 +113,7 @@ class TelegramChat:
             return {"ok": False, "error": str(e)}
 
     async def _process_message(self, message: str):
-        """Process incoming message with natural language understanding.
+        """Process incoming message using Core Agent Engine.
 
         Args:
             message: User message
@@ -122,11 +122,13 @@ class TelegramChat:
             # Send typing indicator
             await self.send_message("🤔 Processing...")
 
-            # Parse intent using Claude API
-            intent = await self._parse_intent(message)
-
-            # Execute based on intent
-            response = await self._execute_intent(intent, message)
+            # Use Core Agent Engine for autonomous execution
+            # The agent will use its tools and reasoning to handle the request
+            response = await self.agent.run(
+                task=f"User request via Telegram: {message}",
+                max_iterations=10,  # Limit iterations for chat responses
+                system_prompt=self._build_telegram_system_prompt()
+            )
 
             # Send response
             await self.send_message(response)
@@ -134,6 +136,47 @@ class TelegramChat:
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             await self.send_message(f"❌ Error: {str(e)}")
+
+    def _build_telegram_system_prompt(self) -> str:
+        """Build system prompt for Telegram interactions.
+
+        Returns:
+            System prompt string
+        """
+        uptime = datetime.now() - self.agent.start_time if hasattr(self.agent, 'start_time') else None
+        uptime_str = f"{uptime.seconds // 3600}h {(uptime.seconds % 3600) // 60}m" if uptime else "Unknown"
+
+        return f"""You are an autonomous AI agent system deployed on AWS EC2, running 24/7 as a systemd service.
+
+Current Status:
+- Uptime: {uptime_str}
+- Model: {self.agent.config.default_model}
+- Location: EC2 instance (Amazon Linux)
+- Interface: Telegram webhook (instant messaging)
+
+You are receiving requests from your user via Telegram. Your job is to:
+1. Understand what the user is asking for
+2. Use your available tools to accomplish the task
+3. Provide a clear, concise response
+
+Available Tools:
+- bash: Execute system commands (check status, pull git updates, etc.)
+- file_operations: Read/write files
+- web_search: Fetch web content
+
+Common Requests:
+- "What's your status?" → Use bash to check systemctl status, uptime
+- "Pull latest from git" → Use bash to run git pull
+- "Check for updates" → Use bash to run git fetch
+- "Show logs" → Use bash to tail log files
+- "What's happening?" → Explain current status and operations
+
+Response Guidelines:
+- Be helpful and concise (2-4 sentences)
+- If executing commands, explain what you're doing
+- Report results clearly
+- Refer to yourself as "I" or "the agent"
+- Focus on accomplishing the user's request"""
 
     async def _parse_intent(self, message: str) -> Dict[str, Any]:
         """Parse user intent from message using Claude API.
