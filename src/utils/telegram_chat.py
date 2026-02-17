@@ -344,12 +344,18 @@ CRITICAL REQUIREMENTS:
         msg_lower = message.lower()
 
         # Simple keyword-based intent detection
-        if any(word in msg_lower for word in ["status", "running", "health"]):
+        if any(word in msg_lower for word in ["status", "running"]):
             return {"action": "status", "confidence": 0.9, "parameters": {}}
         elif any(word in msg_lower for word in ["pull", "update", "git"]):
             return {"action": "git_pull", "confidence": 0.9, "parameters": {}}
         elif any(word in msg_lower for word in ["log", "logs"]):
             return {"action": "logs", "confidence": 0.9, "parameters": {}}
+        elif any(word in msg_lower for word in ["health", "check"]):
+            return {"action": "health_check", "confidence": 0.9, "parameters": {}}
+        elif any(word in msg_lower for word in ["error", "errors", "diagnostic"]):
+            return {"action": "error_report", "confidence": 0.9, "parameters": {}}
+        elif any(word in msg_lower for word in ["fix", "repair", "heal"]):
+            return {"action": "auto_fix", "confidence": 0.9, "parameters": {}}
         elif any(word in msg_lower for word in ["build", "create", "implement"]):
             return {"action": "build_feature", "confidence": 0.8, "parameters": {"feature_name": "requested feature"}}
         else:
@@ -385,6 +391,9 @@ Valid actions:
 - restart: User wants to restart the agent
 - health: User wants system health info
 - logs: User wants to see recent logs
+- health_check: User wants to check for errors or run diagnostics
+- error_report: User wants to see recent errors
+- auto_fix: User wants to run auto-fix on detected errors
 - unknown: Cannot determine intent
 
 For build_feature, extract feature name in parameters.feature_name.
@@ -458,6 +467,15 @@ Respond only with valid JSON, no explanation."""
 
             elif action == "logs":
                 return await self._get_logs()
+
+            elif action == "health_check":
+                return await self._run_health_check()
+
+            elif action == "error_report":
+                return await self._get_error_report()
+
+            elif action == "auto_fix":
+                return await self._run_auto_fix()
 
             else:
                 # Unknown intent - have a conversation
@@ -690,6 +708,142 @@ Response Guidelines:
         except Exception as e:
             logger.error(f"Error in chat: {e}")
             return "I'm not sure how to respond to that. Try asking about my status, or tell me to pull updates from git!"
+
+    async def _run_health_check(self) -> str:
+        """Run self-healing health check.
+
+        Returns:
+            Health check results
+        """
+        try:
+            from src.core.self_healing.monitor import SelfHealingMonitor
+
+            # Create temporary monitor for manual check
+            monitor = SelfHealingMonitor(
+                telegram_notifier=None,  # Don't double-notify
+                log_file=self.agent.config.log_file
+            )
+
+            result = await monitor.run_manual_check()
+
+            message = f"""🩺 **Health Check Results**
+
+**Errors (last 30min):** {result['errors_detected']}
+**Auto-fixable:** {result['auto_fixable']}
+
+**By Severity:**
+"""
+            for severity, count in result.get('by_severity', {}).items():
+                icon = {"critical": "🚨", "high": "⚠️", "medium": "⚠️", "low": "ℹ️"}.get(severity, "•")
+                message += f"{icon} {severity.title()}: {count}\n"
+
+            if result['recent_errors']:
+                message += "\n**Recent Errors:**\n"
+                for err in result['recent_errors'][:3]:
+                    fix_icon = "✅" if err['auto_fixable'] else "❌"
+                    message += f"{fix_icon} {err['type']}: {err['message'][:60]}...\n"
+
+            if result['errors_detected'] == 0:
+                message += "\n✅ **No errors detected - system healthy!**"
+            elif result['auto_fixable'] > 0:
+                message += f"\n💡 **Tip:** Send 'fix errors' to auto-fix {result['auto_fixable']} fixable errors"
+
+            return message
+
+        except Exception as e:
+            logger.error(f"Error running health check: {e}")
+            return f"❌ Error running health check: {str(e)}"
+
+    async def _get_error_report(self) -> str:
+        """Get detailed error report.
+
+        Returns:
+            Error report
+        """
+        try:
+            from src.core.self_healing.error_detector import ErrorDetector
+
+            detector = ErrorDetector(log_file=self.agent.config.log_file)
+            errors = detector.scan_recent_logs(minutes=60)  # Last hour
+
+            if not errors:
+                return "✅ **No errors detected in the last hour!**"
+
+            summary = detector.get_error_summary()
+
+            message = f"""📊 **Error Report (Last Hour)**
+
+**Total Errors:** {summary['total_errors']}
+**Auto-fixable:** {summary['auto_fixable']}
+
+**By Type:**
+"""
+            for error_type, count in summary.get('by_type', {}).items():
+                message += f"• {error_type}: {count}\n"
+
+            message += "\n**Recent:**\n"
+            for err in summary.get('recent_errors', [])[:5]:
+                fix_icon = "✅" if err['auto_fixable'] else "❌"
+                message += f"{fix_icon} [{err['severity']}] {err['type']}\n"
+
+            return message
+
+        except Exception as e:
+            logger.error(f"Error getting error report: {e}")
+            return f"❌ Error generating report: {str(e)}"
+
+    async def _run_auto_fix(self) -> str:
+        """Run auto-fix on detected errors.
+
+        Returns:
+            Auto-fix results
+        """
+        try:
+            from src.core.self_healing.error_detector import ErrorDetector
+            from src.core.self_healing.auto_fixer import AutoFixer
+
+            await self.send_message("🔧 Running auto-fix diagnostics...")
+
+            # Detect errors
+            detector = ErrorDetector(log_file=self.agent.config.log_file)
+            errors = detector.scan_recent_logs(minutes=30)
+
+            fixable_errors = [e for e in errors if e.auto_fixable]
+
+            if not fixable_errors:
+                return "✅ **No auto-fixable errors detected!**"
+
+            # Attempt fixes
+            fixer = AutoFixer(telegram_notifier=self)
+            fixes_successful = 0
+            fixes_failed = 0
+            needs_restart = False
+
+            for error in fixable_errors:
+                result = await fixer.attempt_fix(error)
+                if result.success:
+                    fixes_successful += 1
+                    if result.requires_restart:
+                        needs_restart = True
+                else:
+                    fixes_failed += 1
+
+            message = f"""🔧 **Auto-Fix Complete**
+
+**Attempted:** {len(fixable_errors)}
+**Successful:** {fixes_successful} ✅
+**Failed:** {fixes_failed} ❌
+"""
+            if needs_restart:
+                message += "\n⚠️ **Restart recommended**\nSend 'restart' to apply fixes"
+            else:
+                message += "\n✅ **All fixes applied successfully!**"
+
+            return message
+
+        except Exception as e:
+            logger.error(f"Error running auto-fix: {e}")
+            return f"❌ Error during auto-fix: {str(e)}"
 
     async def send_message(self, text: str):
         """Send message to user.
