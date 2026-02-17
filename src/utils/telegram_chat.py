@@ -196,7 +196,9 @@ class TelegramChat:
             Response string
         """
         # Route based on intent and selected model
-        if intent.get("action") == "build_feature":
+        action = intent.get("action", "unknown")
+
+        if action == "build_feature":
             # Always use Opus architect for building
             logger.info(f"Building feature with Opus architect")
             return await self.agent.run(
@@ -205,20 +207,18 @@ class TelegramChat:
                 system_prompt=self._build_telegram_system_prompt()
             )
 
-        elif intent.get("confidence", 0) < 0.6:
-            # Low confidence - use Opus for understanding
-            confidence = intent.get("confidence", 0.0)
-            logger.info(f"Low confidence ({confidence:.2f}) - using Opus")
-            return await self.agent.run(
-                task=f"User request via Telegram: {message}",
-                max_iterations=10,
-                system_prompt=self._build_telegram_system_prompt()
-            )
+        elif action in ["status", "git_pull", "git_update", "restart", "health", "logs",
+                        "health_check", "error_report", "auto_fix"]:
+            # Known intents - use specific handlers
+            logger.info(f"Using intent handler for: {action}")
+            return await self._execute_intent(intent, message)
 
         else:
-            # Use intent-based handlers with appropriate model
-            logger.info(f"Using intent handler for: {intent.get('action')}")
-            return await self._execute_intent(intent, message)
+            # Unknown intent or question - just chat (don't run full agent loop!)
+            # This handles questions like "What's pending?" efficiently
+            confidence = intent.get("confidence", 0.0)
+            logger.info(f"Unknown/conversational intent (confidence: {confidence:.2f}) - using chat")
+            return await self._chat(message)
 
     async def _execute_with_fallback_model(self, message: str, error: Exception) -> str:
         """Execute with local fallback model (SmolLM2).
