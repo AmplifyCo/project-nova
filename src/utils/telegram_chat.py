@@ -143,6 +143,17 @@ class TelegramChat:
             # Send response
             await self.send_message(response)
 
+            # Store conversation turn in Brain for context continuity
+            # Detect which model was used from response metadata
+            model_used = getattr(self, '_last_model_used', 'claude-sonnet-4-5')
+
+            if hasattr(self.agent, 'brain'):
+                await self.agent.brain.store_conversation_turn(
+                    user_message=message,
+                    assistant_response=response,
+                    model_used=model_used
+                )
+
         except Exception as e:
             logger.error(f"Error processing message: {e}", exc_info=True)
             await self.send_message(f"❌ Error: {str(e)}")
@@ -201,6 +212,7 @@ class TelegramChat:
         if action == "build_feature":
             # Always use Opus architect for building
             logger.info(f"Building feature with Opus architect")
+            self._last_model_used = "claude-opus-4-6"
             return await self.agent.run(
                 task=f"User request via Telegram: {message}",
                 max_iterations=30,  # More iterations for complex builds
@@ -218,6 +230,7 @@ class TelegramChat:
             if self._is_code_question(message):
                 # Questions about code need tools to answer - use agent with limited iterations
                 logger.info(f"Code/feature question detected - using agent with tools (limited iterations)")
+                self._last_model_used = "claude-sonnet-4-5"
                 return await self.agent.run(
                     task=f"Answer this question: {message}\n\nBe concise (2-4 sentences). Use tools to find factual information. Don't make assumptions.",
                     max_iterations=5,  # Limited iterations to avoid timeout
@@ -227,10 +240,11 @@ class TelegramChat:
                 # General conversation - just chat (no tools needed)
                 confidence = intent.get("confidence", 0.0)
                 logger.info(f"Conversational intent (confidence: {confidence:.2f}) - using chat")
+                self._last_model_used = "claude-sonnet-4-5"
                 return await self._chat(message)
 
     async def _execute_with_fallback_model(self, message: str, error: Exception) -> str:
-        """Execute with local fallback model (SmolLM2).
+        """Execute with local fallback model (SmolLM2) using Brain for context.
 
         Args:
             message: User message
@@ -244,6 +258,9 @@ class TelegramChat:
             raise error
 
         logger.warning(f"Using local fallback model due to: {error}")
+
+        # Track that we're using local model
+        self._last_model_used = "smollm2"
 
         # Generate fallback warning message
         warning = self.router.get_fallback_message(message, error)
@@ -263,16 +280,60 @@ class TelegramChat:
                 logger.error("Local model not available")
                 return f"{warning}\n\n❌ Local backup model is not available. Please try again later."
 
+            # CONTEXT RETRIEVAL FROM BRAIN
+            conversation_context = ""
+            if hasattr(self.agent, 'brain'):
+                # Get recent conversation context
+                conversation_context = await self.agent.brain.get_conversation_context(
+                    current_message=message,
+                    limit=3  # Last 3 conversation turns
+                )
+
+            # Build messages with context
+            messages = []
+
+            # Add conversation history if available
+            if conversation_context:
+                recent_turns = await self.agent.brain.get_recent_conversation(limit=3)
+                for turn in reversed(recent_turns):  # Chronological order
+                    messages.append({"role": "user", "content": turn["user_message"]})
+                    messages.append({"role": "assistant", "content": turn["assistant_response"]})
+
+            # Add current message
+            messages.append({"role": "user", "content": message})
+
+            # Enhanced system prompt with context awareness
+            system_prompt = f"""You are a FALLBACK assistant with LIMITED capabilities.
+You're temporarily replacing Claude due to API issues.
+
+{conversation_context}
+
+IMPORTANT:
+- Continue the conversation naturally based on context above
+- Keep responses SHORT (1-2 sentences) due to limited capability
+- If asked something complex, say: "I'll handle that when the main system is back online."
+
+Your capabilities:
+✅ Simple questions, status checks, acknowledgments
+❌ Code writing, complex reasoning, detailed explanations"""
+
             # Generate response with local model
             local_response = await local_client.create_message(
-                messages=[{"role": "user", "content": message}],
+                messages=messages,
                 max_tokens=300,
-                system="You are a helpful autonomous AI agent. Respond concisely and clearly."
+                system=system_prompt
             )
 
             response_text = local_response["content"][0]["text"]
 
-            return f"{warning}\n{response_text}"
+            # Queue for Claude review when available
+            if hasattr(self.agent, 'brain'):
+                await self.agent.brain.queue_for_claude_review(
+                    message=message,
+                    local_response=response_text
+                )
+
+            return f"{warning}\n\n{response_text}"
 
         except Exception as fallback_error:
             logger.error(f"Fallback model also failed: {fallback_error}")
