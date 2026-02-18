@@ -1,0 +1,157 @@
+# ============================================================
+# Digital Twin - Talents Configuration
+# ============================================================
+# This file defines all talents (capabilities) your Digital Twin
+# can have. Non-sensitive config only — credentials go in .env
+#
+# To configure a talent: dt-setup <talent-name>
+# To view talent status:  dt-setup talents
+# ============================================================
+
+communication:
+  email:
+    enabled: true
+    display_name: "Email"
+    description: "Read, send, and reply to emails"
+    env_vars: [EMAIL_ADDRESS, EMAIL_PASSWORD, EMAIL_IMAP_SERVER, EMAIL_SMTP_SERVER]
+    dt_setup_cmd: "dt-setup email"
+
+  whatsapp:
+    enabled: false
+    display_name: "WhatsApp"
+    description: "Send and receive WhatsApp messages"
+    coming_soon: true
+    dt_setup_cmd: "dt-setup whatsapp"
+
+  sms:
+    enabled: false
+    display_name: "SMS"
+    description: "Send SMS text messages"
+    coming_soon: true
+    dt_setup_cmd: "dt-setup sms"
+
+  slack:
+    enabled: false
+    display_name: "Slack"
+    description: "Send messages and notifications to Slack"
+    coming_soon: true
+    dt_setup_cmd: "dt-setup slack"
+
+social_media:
+  x:
+    enabled: false
+    display_name: "Post on X"
+    description: "Post updates to X (Twitter) — no auto-interactions"
+    coming_soon: true
+    env_vars: [X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]
+    dt_setup_cmd: "dt-setup x"
+
+  linkedin:
+    enabled: false
+    display_name: "LinkedIn"
+    description: "Post professional updates to LinkedIn"
+    coming_soon: true
+    env_vars: [LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, LINKEDIN_ACCESS_TOKEN]
+    dt_setup_cmd: "dt-setup linkedin"
+
+  reddit:
+    enabled: false
+    display_name: "Reddit"
+    description: "Post to Reddit communities"
+    coming_soon: true
+    dt_setup_cmd: "dt-setup reddit"
+
+productivity:
+  calendar:
+    enabled: true
+    display_name: "Calendar"
+    description: "Check, create, and update calendar events"
+    env_vars: [CALDAV_URL, CALDAV_USERNAME, CALDAV_PASSWORD]
+    dt_setup_cmd: "dt-setup calendar"
+
+  reminders:
+    enabled: false
+    display_name: "Reminders & ToDo"
+    description: "Create and manage reminders and to-do lists"
+    coming_soon: true
+    dt_setup_cmd: "dt-setup reminders"
+
+  notes:
+    enabled: false
+    display_name: "Notes"
+    description: "Create and retrieve notes (Notion, Apple Notes, etc.)"
+    coming_soon: true
+    dt_setup_cmd: "dt-setup notes"
+
+  contacts:
+    enabled: false
+    display_name: "Contacts"
+    description: "Look up and manage contacts"
+    coming_soon: true
+    dt_setup_cmd: "dt-setup contacts"
+
+research:
+  web:
+    enabled: true
+    display_name: "Web Research"
+    description: "Search and summarize anything on the web"
+    always_available: true
+
+  maps:
+    enabled: false
+    display_name: "Find Places"
+    description: "Find restaurants, businesses, and places via Google Maps"
+    coming_soon: true
+    env_vars: [GOOGLE_MAPS_API_KEY]
+    dt_setup_cmd: "dt-setup maps"
+
+  weather:
+    enabled: false
+    display_name: "Weather"
+    description: "Get current weather and forecasts"
+    coming_soon: true
+    env_vars: [WEATHER_API_KEY]
+    dt_setup_cmd: "dt-setup weather"
+
+  news:
+    enabled: false
+    display_name: "News"
+    description: "Fetch and summarize latest news"
+    coming_soon: true
+    dt_setup_cmd: "dt-setup news"
+
+files_and_code:
+  files:
+    enabled: true
+    display_name: "File Operations"
+    description: "Read, write, and manage files on the system"
+    always_available: true
+
+  bash:
+    enabled: true
+    display_name: "Run Commands"
+    description: "Execute scripts and terminal commands"
+    always_available: true
+
+  github:
+    enabled: false
+    display_name: "GitHub"
+    description: "Manage repos, issues, and pull requests"
+    coming_soon: true
+    env_vars: [GITHUB_TOKEN]
+    dt_setup_cmd: "dt-setup github"
+
+finance:
+  expenses:
+    enabled: false
+    display_name: "Expense Tracking"
+    description: "Log and categorize expenses"
+    coming_soon: true
+    dt_setup_cmd: "dt-setup expenses"
+
+  invoices:
+    enabled: false
+    display_name: "Invoice Generation"
+    description: "Create and send invoices"
+    coming_soon: true
+    dt_setup_cmd: "dt-setup invoices"

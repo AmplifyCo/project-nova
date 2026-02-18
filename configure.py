@@ -536,8 +536,21 @@ def main():
         default='.env',
         help='Path to .env file (default: .env)'
     )
+    parser.add_argument(
+        '--talents',
+        action='store_true',
+        help='Show all talents and their configuration status'
+    )
 
     args = parser.parse_args()
+
+    if args.talents:
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from src.core.talents.catalog import TalentCatalog
+        TalentCatalog().print_status()
+        return
 
     wizard = ConfigurationWizard(env_path=args.env_file)
     wizard.run(

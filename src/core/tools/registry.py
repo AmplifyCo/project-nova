@@ -152,6 +152,15 @@ class ToolRegistry:
         """
         return list(self.tools.keys())
 
+    def get_talent_status(self):
+        """Print the full talent catalog with active/coming-soon status."""
+        try:
+            from ..talents.catalog import TalentCatalog
+            catalog = TalentCatalog()
+            catalog.print_status()
+        except Exception as e:
+            logger.error(f"Failed to load talent catalog: {e}")
+
     def _register_email_tool(self):
         """Register Email tool if credentials provided in environment."""
         try:
