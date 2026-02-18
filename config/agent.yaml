@@ -35,64 +35,38 @@ agent:
       - sudo firewall-cmd
       # Logs
       - sudo journalctl
-    allowed_commands:
-      # Package managers
-      - npm
-      - pip
-      - yum
-      - apt
-      - apt-get
-      # Version control
-      - git
-      # Languages & testing
-      - python
-      - pytest
-      - node
-      - bash
-      # System inspection (safe read-only commands)
-      - cat
-      - ls
-      - pwd
-      - echo
-      - which
-      - whereis
-      - uname
-      - whoami
-      - id
-      - hostname
-      - uptime
-      - df
-      - du
-      - ps
-      - grep
-      - find
-      - head
-      - tail
-      - wc
-      - sort
-      - uniq
-      # File operations
-      - mkdir
-      - touch
-      - cp
-      - mv
-      - chmod
-      - chown
-      # Browsers
-      - w3m
-      - chromium
-      - chromium-browser
+    # ALLOWLIST DISABLED - Using blocklist-only approach
+    # Empty list = allow all commands except those explicitly blocked below
+    # This is more flexible and requires less maintenance
+    allowed_commands: []
+    # BLOCKLIST - Explicitly dangerous commands to prevent
+    # Everything else is allowed
     blocked_commands:
+      # Destructive file operations
       - rm -rf /
+      - rm -rf /*
+      - sudo rm -rf
       - sudo rm
+      # System control
       - sudo shutdown
       - sudo reboot
       - sudo poweroff
       - sudo halt
+      - sudo init
+      # Disk operations
       - format
       - mkfs
       - dd if=/dev/zero
+      - dd if=/dev/random
       - sudo dd
+      # Process/user management
+      - sudo kill -9 1
+      - sudo killall
+      - sudo userdel
+      - sudo deluser
+      # Network attacks
+      - :(){ :|:& };:  # fork bomb
+      - sudo iptables -F  # flush firewall rules
 
 brain:
   vector_db:
