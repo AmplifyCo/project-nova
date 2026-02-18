@@ -53,7 +53,22 @@ if ! git diff-index --quiet HEAD --; then
     git stash save "Auto-update stash $(date '+%Y-%m-%d %H:%M:%S')" 2>&1 | tee -a "$LOG_FILE"
 fi
 
-# Pull updates
+# Clean untracked files that conflict with incoming changes
+# (e.g., builder agent created files that are now in git)
+CONFLICTS=$(git merge-tree $(git merge-base HEAD origin/main) HEAD origin/main 2>/dev/null | grep "^+" | head -5)
+UNTRACKED_CONFLICTS=$(git pull origin main --dry-run 2>&1 | grep "untracked working tree files" -A 100 | grep "^\s" | xargs)
+if [ -n "$UNTRACKED_CONFLICTS" ]; then
+    log "⚠️  Untracked files conflict with incoming changes, cleaning..."
+    for f in $UNTRACKED_CONFLICTS; do
+        if [ -f "$f" ]; then
+            log "   Removing conflicting untracked file: $f"
+            rm -f "$f"
+        fi
+    done
+fi
+
+# Pull updates (use pipefail to catch git errors through tee)
+set -o pipefail
 log "📦 Pulling updates..."
 if git pull origin main 2>&1 | tee -a "$LOG_FILE"; then
     log "✅ Updates pulled successfully"
