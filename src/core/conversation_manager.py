@@ -692,6 +692,21 @@ Return ONLY ONE WORD: build_feature, status, question, or action"""
             "add feature", "new feature", "develop"
         ]):
             return {"action": "build_feature", "confidence": 0.8, "parameters": {}}
+        elif any(word in msg_lower for word in [
+            "post", "tweet", "send", "reply", "forward",
+            "fetch", "download", "upload", "search",
+            "check inbox", "read email", "schedule",
+            "fix", "update", "change", "modify", "delete",
+            "remove", "install", "deploy", "run", "execute",
+            "post on x", "send email", "check email",
+        ]):
+            return {"action": "action", "confidence": 0.8, "parameters": {}}
+        elif msg_lower.strip().endswith("?") or any(word in msg_lower for word in [
+            "what", "how", "why", "when", "where", "which",
+            "is ", "are ", "does ", "can ", "should ",
+            "tell me", "explain",
+        ]):
+            return {"action": "question", "confidence": 0.8, "parameters": {}}
         else:
             return {"action": "unknown", "confidence": 0.3, "parameters": {}}
 
