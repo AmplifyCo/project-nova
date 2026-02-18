@@ -5,7 +5,7 @@ talents are active based on environment variables.
 import os
 import yaml
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional, Tuple
 
 # Category display config
 CATEGORY_META = {
@@ -32,9 +32,12 @@ class TalentCatalog:
         if config_path is None:
             # Find config/talents.yaml relative to project root
             here = Path(__file__).resolve()
-            project_root = here.parents[3]  # src/core/talents/ -> project root
-            config_path = project_root / "config" / "talents.yaml"
+            self.project_root = here.parents[3]  # src/core/talents/ -> project root
+            config_path = self.project_root / "config" / "talents.yaml"
+        else:
+            self.project_root = Path(config_path).resolve().parents[1]
 
+        self.config_path = Path(config_path)
         with open(config_path, "r") as f:
             self._config = yaml.safe_load(f)
 
@@ -53,6 +56,29 @@ class TalentCatalog:
             return self.STATUS_NOT_CONFIGURED
 
         return self.STATUS_ACTIVE
+
+    def get_talent_by_name(self, name: str) -> Optional[Tuple[str, str, Dict[str, Any]]]:
+        """
+        Fuzzy-match a talent by display name, key, or hyphenated name.
+        Returns (category, key, config) or None.
+
+        Examples:
+            "Post-on-X" → ("social_media", "x", {...})
+            "email" → ("communication", "email", {...})
+            "LinkedIn" → ("social_media", "linkedin", {...})
+        """
+        normalized = name.lower().replace("-", " ").replace("_", " ").strip()
+
+        for category, talents in self._config.items():
+            for key, cfg in talents.items():
+                display = cfg.get("display_name", key).lower()
+                # Match against: key, display name, or normalized input
+                if (key == normalized
+                        or display == normalized
+                        or normalized in display
+                        or display.replace(" ", "") == normalized.replace(" ", "")):
+                    return (category, key, cfg)
+        return None
 
     def get_all(self) -> Dict[str, List[Dict]]:
         """Return all talents grouped by category with status."""

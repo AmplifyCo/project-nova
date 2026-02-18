@@ -43,8 +43,26 @@ social_media:
     display_name: "Post on X"
     description: "Post updates to X (Twitter) — no auto-interactions"
     coming_soon: true
-    env_vars: [X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]
-    dt_setup_cmd: "dt-setup x"
+    env_vars: [X_CLIENT_ID, X_CLIENT_SECRET, X_ACCESS_TOKEN]
+    dt_setup_cmd: "dt-setup talent Post-on-X"
+    library: xdk
+    build_instructions: |
+      Build an X (Twitter) posting tool using the xdk library (X Developer Kit).
+      Reference: https://github.com/xdevplatform/samples/blob/main/python/posts/create_post.py
+      Auth: Use OAuth 2.0 with stored access token from X_ACCESS_TOKEN env var.
+      Create xdk.Client(access_token=access_token) for API calls.
+      Operations:
+        - post_tweet: client.posts.create(body={"text": content}). Required.
+        - delete_tweet: client.posts.delete(tweet_id). Optional.
+      Security rules:
+        - Never post sensitive or personal information.
+        - Never auto-reply, auto-like, or auto-retweet.
+        - Only post when explicitly asked by the user via Telegram.
+      Add xdk to requirements.txt.
+    credential_prompts:
+      X_CLIENT_ID: "X Client ID (from developer.x.com)"
+      X_CLIENT_SECRET: "X Client Secret"
+      X_ACCESS_TOKEN: "X Access Token (OAuth 2.0)"
 
   linkedin:
     enabled: false
@@ -52,14 +70,23 @@ social_media:
     description: "Post professional updates to LinkedIn"
     coming_soon: true
     env_vars: [LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, LINKEDIN_ACCESS_TOKEN]
-    dt_setup_cmd: "dt-setup linkedin"
+    dt_setup_cmd: "dt-setup talent LinkedIn"
+    build_instructions: |
+      Build a LinkedIn posting tool using the LinkedIn API v2.
+      Operations: post_update (share text/link on feed). Required.
+      Auth: Use OAuth 2.0 access token from LINKEDIN_ACCESS_TOKEN env var.
+      Security: Never share sensitive info. Only post when asked by user.
+    credential_prompts:
+      LINKEDIN_CLIENT_ID: "LinkedIn App Client ID"
+      LINKEDIN_CLIENT_SECRET: "LinkedIn App Client Secret"
+      LINKEDIN_ACCESS_TOKEN: "LinkedIn Access Token"
 
   reddit:
     enabled: false
     display_name: "Reddit"
     description: "Post to Reddit communities"
     coming_soon: true
-    dt_setup_cmd: "dt-setup reddit"
+    dt_setup_cmd: "dt-setup talent Reddit"
 
 productivity:
   calendar:

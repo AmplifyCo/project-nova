@@ -639,6 +639,7 @@ case "$1" in
         ;;
     "talents")
         # Show talent catalog
+        cd "$SCRIPT_DIR"
         python3 -c "
 import sys
 sys.path.insert(0, '$SCRIPT_DIR')
@@ -646,71 +647,29 @@ from src.core.talents.catalog import TalentCatalog
 TalentCatalog().print_status()
 "
         ;;
-    "x"|"twitter")
-        echo ""
-        echo "📱 X (Twitter) Talent"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "⚙️  Coming soon!"
-        echo ""
-        echo "This talent will let your Digital Twin post to X."
-        echo "Follow updates: dt-setup auto-update now"
-        echo ""
-        ;;
-    "linkedin")
-        echo ""
-        echo "📱 LinkedIn Talent"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "⚙️  Coming soon!"
-        echo ""
-        echo "This talent will let your Digital Twin post to LinkedIn."
-        echo "Follow updates: dt-setup auto-update now"
-        echo ""
-        ;;
-    "whatsapp")
-        echo ""
-        echo "📡 WhatsApp Talent"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "⚙️  Coming soon!"
-        echo ""
-        echo "This talent will let your Digital Twin send WhatsApp messages."
-        echo "Follow updates: dt-setup auto-update now"
-        echo ""
-        ;;
-    "reminders")
-        echo ""
-        echo "📅 Reminders & ToDo Talent"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "⚙️  Coming soon!"
-        echo ""
-        echo "This talent will let your Digital Twin manage reminders and to-do lists."
-        echo "Follow updates: dt-setup auto-update now"
-        echo ""
-        ;;
-    "maps"|"restaurants")
-        echo ""
-        echo "🔍 Find Places Talent"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "⚙️  Coming soon!"
-        echo ""
-        echo "This talent will let your Digital Twin find restaurants and places via Google Maps."
-        echo "Follow updates: dt-setup auto-update now"
-        echo ""
-        ;;
-    "github")
-        echo ""
-        echo "💻 GitHub Talent"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo ""
-        echo "⚙️  Coming soon!"
-        echo ""
-        echo "This talent will let your Digital Twin manage GitHub repos, issues, and PRs."
-        echo "Follow updates: dt-setup auto-update now"
-        echo ""
+    "talent")
+        # Build a talent using the one-shot agent
+        if [ -z "$2" ]; then
+            echo ""
+            echo "Usage: dt-setup talent <talent-name>"
+            echo ""
+            echo "Examples:"
+            echo "  dt-setup talent Post-on-X     # Build X posting talent"
+            echo "  dt-setup talent LinkedIn       # Build LinkedIn talent"
+            echo "  dt-setup talent WhatsApp       # Build WhatsApp talent"
+            echo ""
+            echo "Available talents:"
+            cd "$SCRIPT_DIR"
+            python3 -c "
+import sys
+sys.path.insert(0, '$SCRIPT_DIR')
+from src.core.talents.catalog import TalentCatalog
+TalentCatalog().print_status()
+"
+        else
+            cd "$SCRIPT_DIR"
+            python3 -m src.core.talents.builder "$2"
+        fi
         ;;
     "--help"|"-h"|"help")
         # Show help
@@ -735,20 +694,15 @@ Usage:
   dt-setup status         Check bot status
 
   Talents (Capabilities):
-  dt-setup talents        List all talents and their status
+  dt-setup talents                List all talents and their status
+  dt-setup talent <name>          Build a new talent (agent-powered)
 
-  Configure Talents:
+  Configure Existing:
   dt-setup core           Configure API keys
   dt-setup telegram       Configure Telegram
   dt-setup email          Configure Email talent
   dt-setup calendar       Configure Calendar talent
   dt-setup tunnel         Configure Cloudflare Tunnel
-  dt-setup x              X (Twitter) — coming soon
-  dt-setup linkedin       LinkedIn — coming soon
-  dt-setup whatsapp       WhatsApp — coming soon
-  dt-setup reminders      Reminders & ToDo — coming soon
-  dt-setup maps           Find Places — coming soon
-  dt-setup github         GitHub — coming soon
 
   Tunnel Management:
   dt-setup tunnel-start   Start Cloudflare Tunnel
@@ -764,9 +718,10 @@ Usage:
 Examples:
   dt-setup                          # Full wizard
   dt-setup talents                  # View all talents
+  dt-setup talent Post-on-X         # Build X posting talent
+  dt-setup talent LinkedIn          # Build LinkedIn talent
   dt-setup start                    # Start the bot
   dt-setup email                    # Configure Email talent
-  dt-setup calendar                 # Configure Calendar talent
   dt-setup auto-update enable daily # Enable daily auto-updates
 
 First-time setup (TWO commands!):
