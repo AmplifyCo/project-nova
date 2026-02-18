@@ -145,9 +145,10 @@ class TelegramChat:
 
             # Store conversation turn in Brain for context continuity
             # Detect which model was used from response metadata
+            # (Only DigitalCloneBrain has conversation methods, CoreBrain does not)
             model_used = getattr(self, '_last_model_used', 'claude-sonnet-4-5')
 
-            if hasattr(self.agent, 'brain'):
+            if hasattr(self.agent, 'brain') and hasattr(self.agent.brain, 'store_conversation_turn'):
                 await self.agent.brain.store_conversation_turn(
                     user_message=message,
                     assistant_response=response,
@@ -282,7 +283,7 @@ class TelegramChat:
 
             # CONTEXT RETRIEVAL FROM BRAIN
             conversation_context = ""
-            if hasattr(self.agent, 'brain'):
+            if hasattr(self.agent, 'brain') and hasattr(self.agent.brain, 'get_conversation_context'):
                 # Get recent conversation context
                 conversation_context = await self.agent.brain.get_conversation_context(
                     current_message=message,
@@ -293,7 +294,7 @@ class TelegramChat:
             messages = []
 
             # Add conversation history if available
-            if conversation_context:
+            if conversation_context and hasattr(self.agent.brain, 'get_recent_conversation'):
                 recent_turns = await self.agent.brain.get_recent_conversation(limit=3)
                 for turn in reversed(recent_turns):  # Chronological order
                     messages.append({"role": "user", "content": turn["user_message"]})
@@ -327,7 +328,7 @@ Your capabilities:
             response_text = local_response["content"][0]["text"]
 
             # Queue for Claude review when available
-            if hasattr(self.agent, 'brain'):
+            if hasattr(self.agent, 'brain') and hasattr(self.agent.brain, 'queue_for_claude_review'):
                 await self.agent.brain.queue_for_claude_review(
                     message=message,
                     local_response=response_text
