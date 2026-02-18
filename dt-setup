@@ -10,14 +10,26 @@
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIGURE_PY="$SCRIPT_DIR/configure.py"
-REQUIREMENTS_TXT="$SCRIPT_DIR/requirements.txt"
 INSTALL_DIR="/usr/local/bin"
 COMMAND_NAME="dt-setup"
+
+# If running from the install location, look for a stored project directory
+if [[ "$SCRIPT_DIR" == "$INSTALL_DIR" ]]; then
+    # Check for a stored project path written at install time
+    STORED_PROJECT_DIR_FILE="$INSTALL_DIR/.dt-setup-project-dir"
+    if [ -f "$STORED_PROJECT_DIR_FILE" ]; then
+        SCRIPT_DIR="$(cat "$STORED_PROJECT_DIR_FILE")"
+    fi
+fi
+
+CONFIGURE_PY="$SCRIPT_DIR/configure.py"
+REQUIREMENTS_TXT="$SCRIPT_DIR/requirements.txt"
 
 # Check if configure.py exists
 if [ ! -f "$CONFIGURE_PY" ]; then
     echo "Error: configure.py not found at $CONFIGURE_PY"
+    echo "  Expected project directory: $SCRIPT_DIR"
+    echo "  If you moved the project, re-run: cd <project-dir> && ./dt-setup"
     exit 1
 fi
 
@@ -143,9 +155,10 @@ install_globally() {
         sudo mkdir -p "$INSTALL_DIR"
     fi
 
-    # Copy script
+    # Copy script and store the project directory so the global install can find it
     echo "   Copying to $INSTALL_DIR/$COMMAND_NAME"
-    if sudo cp "$0" "$INSTALL_DIR/$COMMAND_NAME" && sudo chmod +x "$INSTALL_DIR/$COMMAND_NAME"; then
+    if sudo cp "$0" "$INSTALL_DIR/$COMMAND_NAME" && sudo chmod +x "$INSTALL_DIR/$COMMAND_NAME" \
+        && echo "$SCRIPT_DIR" | sudo tee "$INSTALL_DIR/.dt-setup-project-dir" > /dev/null; then
         echo ""
         echo "✅ dt-setup installed successfully!"
         echo "   You can now run 'dt-setup' from any directory"
