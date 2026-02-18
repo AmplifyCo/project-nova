@@ -1,24 +1,83 @@
 #!/bin/bash
-# Digital Twin Configuration Command
-# Handles full setup: dependencies + configuration
+# Digital Twin Setup - Complete automation
+# ONE command to: install itself, dependencies, and configure everything
 #
 # Usage:
-#   dt-setup                # Full setup wizard
-#   dt-setup core           # Configure API keys
-#   dt-setup telegram       # Configure Telegram
-#   dt-setup email          # Configure email
-#   dt-setup calendar       # Configure calendar
-#   dt-setup digital-twin   # Full setup (alias)
+#   ./dt-setup              # First run from repo (self-installs)
+#   dt-setup                # After install, run from anywhere
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIGURE_PY="$SCRIPT_DIR/configure.py"
 REQUIREMENTS_TXT="$SCRIPT_DIR/requirements.txt"
+INSTALL_DIR="/usr/local/bin"
+COMMAND_NAME="dt-setup"
 
 # Check if configure.py exists
 if [ ! -f "$CONFIGURE_PY" ]; then
     echo "Error: configure.py not found at $CONFIGURE_PY"
     exit 1
+fi
+
+# ============================================
+# Self-installation check
+# ============================================
+install_globally() {
+    echo ""
+    echo "🔧 Installing dt-setup globally..."
+    echo "   This allows you to run 'dt-setup' from anywhere (like git, python, npm)"
+    echo ""
+
+    # Make script executable
+    chmod +x "$0"
+    chmod +x "$CONFIGURE_PY"
+
+    # Check if /usr/local/bin exists
+    if [ ! -d "$INSTALL_DIR" ]; then
+        echo "   Creating $INSTALL_DIR..."
+        sudo mkdir -p "$INSTALL_DIR"
+    fi
+
+    # Copy script
+    echo "   Copying to $INSTALL_DIR/$COMMAND_NAME"
+    if sudo cp "$0" "$INSTALL_DIR/$COMMAND_NAME" && sudo chmod +x "$INSTALL_DIR/$COMMAND_NAME"; then
+        echo ""
+        echo "✅ dt-setup installed successfully!"
+        echo "   You can now run 'dt-setup' from any directory"
+        echo ""
+        return 0
+    else
+        echo ""
+        echo "❌ Installation failed. Continuing with local setup..."
+        echo ""
+        return 1
+    fi
+}
+
+# Check if running locally and not installed globally
+if [[ "$0" == "./"* ]] || [[ "$0" == *"/dt-setup" && ! -f "$INSTALL_DIR/$COMMAND_NAME" ]]; then
+    # Running from local directory and not installed globally
+    if [[ "$1" != "--help" && "$1" != "-h" && "$1" != "help" && "$1" != "--skip-install" ]]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "  Welcome to Digital Twin Setup!"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "First-time setup detected."
+        echo ""
+
+        read -p "Install dt-setup globally? (recommended) [Y/n]: " install_choice
+        install_choice=${install_choice:-Y}
+
+        if [[ "$install_choice" =~ ^[Yy]$ ]]; then
+            install_globally
+        else
+            echo ""
+            echo "⏭️  Skipping global installation."
+            echo "   You can install later with: make install"
+            echo ""
+        fi
+    fi
 fi
 
 # ============================================
@@ -91,17 +150,18 @@ case "$1" in
     "--help"|"-h"|"help")
         # Show help
         cat << EOF
-Digital Twin Setup Tool
+Digital Twin Setup - Complete Automation
 
-ONE command for complete setup:
-  • Checks and installs dependencies (pip packages)
-  • Runs interactive configuration wizard
-  • Auto-detects email providers
-  • Updates .env file
+ONE command does everything:
+  1. ✅ Installs itself globally (first run)
+  2. ✅ Installs Python dependencies
+  3. ✅ Runs interactive configuration
+  4. ✅ Auto-detects email providers
+  5. ✅ Updates .env file
+  6. ✅ Ready to run!
 
 Usage:
   dt-setup                Full setup wizard (all tools)
-  dt-setup digital-twin   Full setup (alias)
   dt-setup core           Configure API keys only
   dt-setup telegram       Configure Telegram bot only
   dt-setup email          Configure email only
@@ -115,17 +175,26 @@ Aliases:
   calendar, cal           → Calendar configuration
 
 Examples:
-  dt-setup                # Full wizard (auto-installs deps if needed)
-  dt-setup email          # Just configure email
-  dt-setup core           # Just update API keys
+  dt-setup                # Full wizard
+  dt-setup email          # Just update email
+  dt-setup core           # Just update API key
 
-First-time setup:
-  git clone <repo>
-  cd digital-twin
-  make install            # Install dt-setup globally (one-time)
-  dt-setup                # Installs deps + configures everything!
+First-time setup (TWO commands!):
+  git clone https://github.com/AmplifyCo/digital-twin.git
+  cd digital-twin && ./dt-setup
 
-For advanced options, use:
+  That's it! The script:
+  • Installs itself globally
+  • Installs all dependencies
+  • Asks for Claude API key
+  • Asks for Gmail credentials (optional)
+  • Configures everything
+  • Bot is ready to run!
+
+After first run:
+  dt-setup                # Works from anywhere (like git, python)
+
+For advanced options:
   python3 configure.py --help
 
 EOF

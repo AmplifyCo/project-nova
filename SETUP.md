@@ -1,53 +1,107 @@
 # Digital Twin Setup Guide
 
-Quick start guide for setting up your Digital Twin bot with email and calendar integration.
+The simplest AI agent setup you'll ever do.
+
+## 🚀 Quick Start (2 Commands!)
+
+```bash
+git clone https://github.com/AmplifyCo/digital-twin.git
+cd digital-twin && ./dt-setup
+```
+
+**That's it!** The script handles everything:
+- ✅ Installs itself globally
+- ✅ Installs dependencies
+- ✅ Configures credentials
+- ✅ Sets up email/calendar tools
+- ✅ Ready to run!
 
 ## Prerequisites
 
 - Python 3.8+
-- Anthropic API key
-- Email account (Gmail, Outlook, Yahoo, or custom IMAP/SMTP)
-- Calendar access (Google Calendar, Outlook, iCloud, or custom CalDAV)
+- Anthropic API key (get from https://console.anthropic.com/settings/keys)
+- Gmail account (optional, for email/calendar features)
 
-## Quick Setup (EC2 or Local)
-
-### 1. Install dt-setup Command (One-Time)
-
-**Using make (recommended):**
-```bash
-make install
-```
-
-**Or using the install script:**
-```bash
-sudo ./install.sh
-```
-
-This installs `dt-setup` to `/usr/local/bin` so you can run it like `python`, `git`, `npm` - from anywhere, no `./` needed.
-
-### 2. Run Setup Wizard
+## What Happens When You Run `./dt-setup`?
 
 ```bash
-dt-setup              # ONE command does everything!
+$ ./dt-setup
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Welcome to Digital Twin Setup!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+First-time setup detected.
+
+Install dt-setup globally? (recommended) [Y/n]: y
+
+🔧 Installing dt-setup globally...
+   This allows you to run 'dt-setup' from anywhere (like git, python, npm)
+
+✅ dt-setup installed successfully!
+
+📦 Dependencies not found. Installing required packages...
+Running: pip install -r requirements.txt
+
+[... pip install output ...]
+
+✅ Dependencies installed successfully!
+
+============================================================
+  🤖 Digital Twin Configuration Wizard
+============================================================
+
+This wizard will help you set up:
+  • Core API credentials (Anthropic)
+  • Communication tools (Telegram, Email, Calendar)
+
+Configure core API keys? (y/n) [y]: y
+
+🔑 CORE CONFIGURATION
+
+Get your API key from: https://console.anthropic.com/settings/keys
+
+Enter Anthropic API key: sk-ant-xxxxx
+
+✅ Core configuration complete!
+
+Configure email? (y/n) [n]: y
+
+📧 EMAIL CONFIGURATION
+
+Enter your email address: john@gmail.com
+✅ Detected provider: gmail.com
+
+Auto-configured:
+   IMAP Server: imap.gmail.com:993
+   SMTP Server: smtp.gmail.com:587
+
+Enter app password: [hidden]
+
+✅ Email configuration complete!
+
+🎉 Setup Complete!
+
+Next steps:
+  1. Verify your .env file
+  2. Start the bot: python -m src.main
 ```
 
-**What dt-setup does automatically:**
-1. ✅ Checks if dependencies are installed
-2. ✅ Runs `pip install -r requirements.txt` if needed
-3. ✅ Launches interactive configuration wizard
-4. ✅ Auto-detects email providers (Gmail, Outlook, etc.)
-5. ✅ Auto-populates IMAP/SMTP/CalDAV settings
-6. ✅ Updates `.env` file with your credentials
+## Detailed Setup
 
-**Specific configuration:**
+### Update Configuration Later
+
 ```bash
-dt-setup email        # Configure email only
-dt-setup telegram     # Configure Telegram only
-dt-setup core         # Configure API keys only
-dt-setup calendar     # Configure calendar only
+dt-setup              # Full wizard
+dt-setup email        # Update email only
+dt-setup telegram     # Update Telegram only
+dt-setup core         # Update API keys only
+dt-setup calendar     # Update calendar only
 ```
 
-### 3. Start the Bot
+Works from **any directory** (like `git`, `python`, `npm`)!
+
+### Start the Bot
 
 ```bash
 python -m src.main
