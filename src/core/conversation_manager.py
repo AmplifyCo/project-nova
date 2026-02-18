@@ -2,6 +2,36 @@
 
 Handles conversation intelligence regardless of communication channel.
 Channels (Telegram, WhatsApp, Discord) just send/receive messages.
+
+## Brain Selection Based on Mode:
+
+**BUILD MODE** (agent building itself):
+- Uses: CoreBrain
+- Purpose: Track build progress, learn patterns, store feature states
+- Storage: Build phases, completed features, pending tasks, code patterns
+- Lifecycle: Persistent (no longer auto-purges)
+
+**ASSISTANT MODE** (day-to-day operations):
+- Uses: DigitalCloneBrain
+- Purpose: Handle conversations, remember preferences, maintain context
+- Storage: Conversation history, user preferences, contacts, context
+- Lifecycle: Permanent
+
+The ConversationManager automatically selects the correct brain based on
+agent.config.mode, but you can switch manually with switch_brain_mode().
+
+## Example:
+
+```python
+# Auto-selection based on mode
+manager = ConversationManager(agent, client, router)
+# If agent.config.mode == "build" → Uses CoreBrain
+# If agent.config.mode == "assistant" → Uses DigitalCloneBrain
+
+# Manual switching
+manager.switch_brain_mode("build")      # Switch to CoreBrain
+manager.switch_brain_mode("assistant")  # Switch to DigitalCloneBrain
+```
 """
 
 import logging
@@ -36,16 +66,60 @@ class ConversationManager:
             agent: AutonomousAgent instance
             anthropic_client: Anthropic API client
             model_router: ModelRouter for intelligent model selection
-            brain: DigitalCloneBrain instance (optional)
+            brain: Brain instance (optional, will auto-select if not provided)
         """
         self.agent = agent
         self.anthropic_client = anthropic_client
         self.router = model_router
-        self.brain = brain or getattr(agent, 'brain', None)
+
+        # SELECT BRAIN BASED ON AGENT MODE
+        if brain:
+            # Explicit brain provided
+            self.brain = brain
+            brain_type = brain.__class__.__name__
+        else:
+            # Auto-select based on mode
+            agent_mode = getattr(agent.config, 'mode', 'assistant')
+
+            if agent_mode == "build":
+                # BUILD MODE: Use CoreBrain for self-building
+                self.brain = getattr(agent, 'core_brain', None)
+                brain_type = "CoreBrain"
+                logger.info("BUILD MODE detected - using CoreBrain for build tracking")
+            else:
+                # ASSISTANT MODE: Use DigitalCloneBrain for operations
+                self.brain = getattr(agent, 'digital_brain', None) or getattr(agent, 'brain', None)
+                brain_type = "DigitalCloneBrain"
+                logger.info("ASSISTANT MODE detected - using DigitalCloneBrain for conversations")
 
         self._last_model_used = "claude-sonnet-4-5"
 
-        logger.info("ConversationManager initialized (channel-agnostic)")
+        logger.info(f"ConversationManager initialized (channel-agnostic, using {brain_type})")
+
+    def switch_brain_mode(self, mode: str):
+        """Switch between CoreBrain (build) and DigitalCloneBrain (assistant).
+
+        Args:
+            mode: "build" or "assistant"
+        """
+        if mode == "build":
+            self.brain = getattr(self.agent, 'core_brain', None)
+            logger.info("Switched to BUILD MODE - using CoreBrain")
+        elif mode == "assistant":
+            self.brain = getattr(self.agent, 'digital_brain', None) or getattr(self.agent, 'brain', None)
+            logger.info("Switched to ASSISTANT MODE - using DigitalCloneBrain")
+        else:
+            logger.warning(f"Unknown mode: {mode}. Valid modes: build, assistant")
+
+    def get_current_brain(self) -> str:
+        """Get current brain type.
+
+        Returns:
+            Brain type name
+        """
+        if self.brain:
+            return self.brain.__class__.__name__
+        return "None"
 
     async def process_message(
         self,
