@@ -32,7 +32,8 @@ class BashTool(BaseTool):
         allowed_commands: List[str] = None,
         blocked_commands: List[str] = None,
         allow_sudo: bool = False,
-        allowed_sudo_commands: List[str] = None
+        allowed_sudo_commands: List[str] = None,
+        audit_logger=None
     ):
         """Initialize BashTool.
 
@@ -41,8 +42,10 @@ class BashTool(BaseTool):
             blocked_commands: List of blocked command patterns
             allow_sudo: Whether to allow limited sudo commands
             allowed_sudo_commands: List of allowed sudo command patterns
+            audit_logger: Optional audit logger for tracking command execution
         """
         self.allowed_commands = allowed_commands or []
+        self.audit_logger = audit_logger
         self.blocked_commands = blocked_commands or [
             "rm -rf /",
             "sudo rm",
@@ -135,6 +138,16 @@ class BashTool(BaseTool):
             else:
                 logger.warning(f"Command failed with return code {process.returncode}")
 
+            # LAYER 13: AUDIT LOGGING
+            if self.audit_logger:
+                self.audit_logger.log_bash_command(
+                    command=command,
+                    user_id="system",  # Will be set properly when integrated
+                    success=success,
+                    output=stdout_str,
+                    error=stderr_str if stderr_str else None
+                )
+
             return ToolResult(
                 success=success,
                 output=stdout_str,
@@ -144,6 +157,16 @@ class BashTool(BaseTool):
 
         except Exception as e:
             logger.error(f"Error executing command: {e}")
+
+            # LAYER 13: AUDIT LOGGING (for exceptions)
+            if self.audit_logger:
+                self.audit_logger.log_bash_command(
+                    command=command,
+                    user_id="system",
+                    success=False,
+                    error=str(e)
+                )
+
             return ToolResult(
                 success=False,
                 error=f"Exception during execution: {str(e)}"

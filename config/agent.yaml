@@ -83,6 +83,16 @@ agent:
       - crontab -e
       - sudo crontab
 
+  # LAYER 11: SEMANTIC VALIDATION
+  # Validates that tool use makes semantic sense given user's message
+  # Uses Claude Haiku for fast, cheap validation before executing dangerous tools
+  semantic_validation:
+    enabled: false  # Set to true to enable (adds latency but increases security)
+    dangerous_tools:  # Only validate these tools (not all tools)
+      - bash
+      - file_write
+    model: "claude-haiku-4-5"  # Fast, cheap model for validation
+
 brain:
   vector_db:
     type: "chromadb"

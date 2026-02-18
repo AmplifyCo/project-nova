@@ -15,14 +15,20 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     """Registry of all available tools for the agent."""
 
-    def __init__(self, config: Dict[str, Any] = None):
+    # Tools that require semantic validation (potentially dangerous)
+    TOOLS_REQUIRING_VALIDATION = ['bash', 'file_write']
+
+    def __init__(self, config: Dict[str, Any] = None, security_guard=None):
         """Initialize tool registry with default tools.
 
         Args:
             config: Configuration dictionary for tools
+            security_guard: Optional LLMSecurityGuard for semantic validation
         """
         self.tools: Dict[str, BaseTool] = {}
         self.config = config or {}
+        self.security_guard = security_guard
+        self.semantic_validation_enabled = self.config.get('semantic_validation', {}).get('enabled', False)
 
         # Get safety config
         safety_config = self.config.get('safety', {})
@@ -66,11 +72,19 @@ class ToolRegistry:
         """
         return [tool.to_anthropic_tool() for tool in self.tools.values()]
 
-    async def execute_tool(self, tool_name: str, **params) -> ToolResult:
-        """Execute a tool by name.
+    async def execute_tool(
+        self,
+        tool_name: str,
+        user_message: str = "",
+        llm_client=None,
+        **params
+    ) -> ToolResult:
+        """Execute a tool by name with optional semantic validation.
 
         Args:
             tool_name: Name of tool to execute
+            user_message: Original user message (for semantic validation)
+            llm_client: LLM client for semantic validation
             **params: Tool parameters
 
         Returns:
@@ -83,6 +97,36 @@ class ToolRegistry:
                 success=False,
                 error=f"Tool not found: {tool_name}"
             )
+
+        # ========================================================================
+        # LAYER 11: SEMANTIC VALIDATION (for dangerous tools only)
+        # ========================================================================
+        if (self.semantic_validation_enabled and
+            self.security_guard and
+            tool_name in self.TOOLS_REQUIRING_VALIDATION and
+            user_message and
+            llm_client):
+
+            try:
+                is_valid, reason = await self.security_guard.validate_tool_use_semantic(
+                    message=user_message,
+                    tool_name=tool_name,
+                    tool_args=params,
+                    llm_client=llm_client
+                )
+
+                if not is_valid:
+                    logger.warning(
+                        f"🚨 SEMANTIC VALIDATION FAILED - Tool: {tool_name}, "
+                        f"Reason: {reason}"
+                    )
+                    return ToolResult(
+                        success=False,
+                        error=f"Security validation failed: {reason}"
+                    )
+            except Exception as e:
+                logger.debug(f"Semantic validation error (allowing): {e}")
+                # Fail open - don't block legitimate use if validation fails
 
         try:
             return await tool.execute(**params)

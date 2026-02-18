@@ -66,6 +66,9 @@ class AutonomousAgent:
         """
         max_iterations = max_iterations or self.config.max_iterations
 
+        # Store current task for semantic validation (Layer 11)
+        self._current_task = task
+
         logger.info(f"Starting autonomous execution: {task}")
         logger.info(f"Max iterations: {max_iterations}")
 
@@ -186,8 +189,13 @@ class AutonomousAgent:
                 logger.info(f"Executing tool: {tool_name}")
                 logger.debug(f"Tool input: {tool_input}")
 
-                # Execute tool
-                result = await self.tools.execute_tool(tool_name, **tool_input)
+                # Execute tool with semantic validation (Layer 11)
+                result = await self.tools.execute_tool(
+                    tool_name,
+                    user_message=getattr(self, '_current_task', ''),
+                    llm_client=self.api_client,
+                    **tool_input
+                )
 
                 # Format result for Claude
                 tool_result = {
