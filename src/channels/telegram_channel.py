@@ -187,31 +187,70 @@ class TelegramChannel:
             update_callback: Function to call with status updates
             user_message: Original user message
         """
-        conversational_updates = [
+        msg_lower = user_message.lower()
+
+        # Initial updates (always shown)
+        initial_updates = [
             "💭 Thinking...",
             "🧠 Checking my memory...",
             "📚 Looking into this..."
         ]
 
-        # Determine context-specific update
-        msg_lower = user_message.lower()
-        if any(word in msg_lower for word in ["build", "implement", "create", "feature"]):
-            conversational_updates.append("🔨 Planning the implementation...")
-        elif any(word in msg_lower for word in ["read", "file", "check"]):
-            conversational_updates.append("📖 Reading files...")
-        elif any(word in msg_lower for word in ["git", "commit", "push"]):
-            conversational_updates.append("🔍 Checking git status...")
+        # Context-specific updates (loop these for long operations)
+        ongoing_updates = []
+
+        if any(word in msg_lower for word in ["git", "pull", "update from git"]):
+            ongoing_updates = [
+                "🔍 Checking git repository...",
+                "📥 Fetching latest changes...",
+                "🔄 Pulling updates...",
+                "📦 Checking dependencies...",
+                "⚙️ Processing updates..."
+            ]
+        elif any(word in msg_lower for word in ["build", "implement", "create", "feature"]):
+            ongoing_updates = [
+                "🔨 Planning the implementation...",
+                "📝 Analyzing requirements...",
+                "🏗️ Designing architecture...",
+                "💻 Preparing to write code..."
+            ]
+        elif any(word in msg_lower for word in ["install", "package", "dependency"]):
+            ongoing_updates = [
+                "📦 Checking package manager...",
+                "🔍 Resolving dependencies...",
+                "⬇️ Downloading packages...",
+                "⚙️ Installing..."
+            ]
+        elif any(word in msg_lower for word in ["restart", "reboot"]):
+            ongoing_updates = [
+                "🔄 Preparing to restart...",
+                "💾 Saving state...",
+                "⚙️ Initiating restart..."
+            ]
+        else:
+            # Generic updates for other operations
+            ongoing_updates = [
+                "⚙️ Working on it...",
+                "🔍 Analyzing...",
+                "💭 Processing..."
+            ]
 
         try:
-            for i, update in enumerate(conversational_updates):
+            # Show initial updates
+            for i, update in enumerate(initial_updates):
                 if i == 0:
                     await asyncio.sleep(1)  # Short delay for first update
                 else:
                     await asyncio.sleep(3)  # 3 seconds between updates
                 await update_callback(update)
 
-            # After all updates, just wait (task will be cancelled when done)
-            await asyncio.sleep(3600)
+            # Loop ongoing updates until task is cancelled
+            # This ensures continuous feedback for long operations
+            update_index = 0
+            while True:
+                await asyncio.sleep(5)  # 5 seconds between ongoing updates
+                await update_callback(ongoing_updates[update_index])
+                update_index = (update_index + 1) % len(ongoing_updates)  # Loop through updates
 
         except asyncio.CancelledError:
             pass  # Expected when processing completes
