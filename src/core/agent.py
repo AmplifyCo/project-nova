@@ -1,5 +1,6 @@
 """Core autonomous agent with self-contained execution loop."""
 
+import asyncio
 import logging
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
@@ -152,9 +153,17 @@ class AutonomousAgent:
                     await self._store_interaction(task, response)
 
             except Exception as e:
+                error_str = str(e)
                 logger.error(f"Error in iteration {iteration}: {e}", exc_info=True)
 
-                # Retry logic
+                # Rate limit — wait and retry instead of crashing
+                if "429" in error_str or "rate_limit" in error_str:
+                    wait_time = min(60 * (2 ** (iteration - 1)), 300)  # Exponential backoff, max 5 min
+                    logger.warning(f"Rate limited. Waiting {wait_time}s before retry...")
+                    await asyncio.sleep(wait_time)
+                    continue
+
+                # Other errors — retry with limit
                 if iteration < self.config.retry_attempts:
                     logger.info(f"Retrying... (attempt {iteration + 1})")
                     continue

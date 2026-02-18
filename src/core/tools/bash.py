@@ -60,16 +60,26 @@ class BashTool(BaseTool):
         self.allow_sudo = allow_sudo
         self.allowed_sudo_commands = allowed_sudo_commands or []
 
-    async def execute(self, command: str, timeout: int = 120) -> ToolResult:
+    async def execute(self, command=None, timeout: int = 120, **kwargs) -> ToolResult:
         """Execute a bash command.
 
         Args:
-            command: Command to execute
+            command: Command to execute (string, or dict with 'command' key)
             timeout: Timeout in seconds
 
         Returns:
             ToolResult with command output
         """
+        # Handle case where command is passed as a dict (Claude API inconsistency)
+        if isinstance(command, dict):
+            command = command.get("command", str(command))
+        if command is None:
+            command = kwargs.get("command", "")
+        if not isinstance(command, str):
+            command = str(command)
+        if not command.strip():
+            return ToolResult(success=False, error="No command provided")
+
         # Security check - blocked commands first
         if self._is_blocked(command):
             logger.warning(f"Blocked dangerous command: {command}")

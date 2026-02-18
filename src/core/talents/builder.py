@@ -35,14 +35,11 @@ def load_file(path: str) -> str:
 
 
 def build_system_prompt(talent_name: str, talent_config: dict, category: str, key: str) -> str:
-    """Build a detailed system prompt with patterns for the agent."""
+    """Build a compact system prompt with patterns for the agent.
 
-    # Load reference files
-    base_tool = load_file("src/core/tools/base.py")
-    email_tool = load_file("src/core/tools/email.py")
-    registry = load_file("src/core/tools/registry.py")
-    types_file = load_file("src/core/types.py")
-
+    Uses interface summaries instead of full file contents to stay
+    within API rate limits (10k tokens/min on lower tiers).
+    """
     build_instructions = talent_config.get("build_instructions", "")
     library = talent_config.get("library", "")
     env_vars = talent_config.get("env_vars", [])
@@ -51,9 +48,6 @@ def build_system_prompt(talent_name: str, talent_config: dict, category: str, ke
     tool_filename = f"{key}_tool.py"
 
     prompt = f"""You are a talent builder for the Digital Twin system.
-Your job is to build the "{talent_name}" talent by creating a new tool that integrates with the existing framework.
-
-## TASK
 Build the "{talent_name}" talent ({description}).
 
 ## BUILD INSTRUCTIONS
@@ -61,55 +55,63 @@ Build the "{talent_name}" talent ({description}).
 
 ## WHAT TO CREATE
 
-### 1. Tool File: src/core/tools/{tool_filename}
-Create a new tool that inherits from BaseTool.
-- Must implement `async execute(**kwargs) -> ToolResult`
-- Must define `name`, `description`, `parameters` class attributes
-- Must handle errors gracefully and return ToolResult(success=False, error=...) on failure
-- Read credentials from environment variables: {', '.join(env_vars)}
+### 1. Tool File: {PROJECT_ROOT}/src/core/tools/{tool_filename}
+```python
+import os
+import logging
+from .base import BaseTool
+from ..types import ToolResult
 
-### 2. Update Registry: src/core/tools/registry.py
-Add a `_register_{key}_tool()` method following the exact pattern of _register_email_tool().
-- Check all required env vars with `if all([...])`
-- Import the tool class
-- Call self.register(tool_instance)
-- Call the method in __init__() after the existing registrations
+class {key.title()}Tool(BaseTool):
+    name = "{key}"
+    description = "..."
+    parameters = {{
+        "action": {{"type": "string", "description": "Action to perform"}},
+        # ... other params
+    }}
 
-### 3. Update Config: config/talents.yaml
-Change the {key} talent entry:
-- Set `coming_soon: false` (remove or set false)
+    def __init__(self, **credentials):
+        self.cred = credentials
+
+    async def execute(self, action: str = None, **kwargs) -> ToolResult:
+        try:
+            # ... implementation
+            return ToolResult(success=True, output="...")
+        except Exception as e:
+            return ToolResult(success=False, error=str(e))
+```
+- ToolResult has: success (bool), output (str), error (str), metadata (dict)
+- Read credentials from env vars: {', '.join(env_vars)}
+- Use async/await. Handle errors. Return ToolResult always.
+
+### 2. Update Registry: {PROJECT_ROOT}/src/core/tools/registry.py
+Read the file first, then add a method following this exact pattern:
+```python
+def _register_{key}_tool(self):
+    try:
+        env_vals = [os.getenv(v) for v in {env_vars}]
+        if all(env_vals):
+            from .{key}_tool import {key.title()}Tool
+            tool = {key.title()}Tool(...)  # pass credentials
+            self.register(tool)
+            logger.info("Tool registered")
+    except Exception as e:
+        logger.warning(f"Failed to register: {{e}}")
+```
+Call `self._register_{key}_tool()` in `__init__()` after existing registrations.
+
+### 3. Update Config: {PROJECT_ROOT}/config/talents.yaml
+Read the file, then change the {key} talent entry:
+- Set `coming_soon: false`
 - Set `enabled: true`
 
-{f"### 4. Add Library: requirements.txt" + chr(10) + f"Add '{library}' to requirements.txt if not already present." + chr(10) if library else ""}
-
-## REFERENCE: BaseTool Interface (src/core/tools/base.py)
-```python
-{base_tool}
-```
-
-## REFERENCE: Example Tool - Email (src/core/tools/email.py)
-```python
-{email_tool[:3000]}
-```
-
-## REFERENCE: Tool Registry (src/core/tools/registry.py)
-```python
-{registry}
-```
-
-## REFERENCE: ToolResult Type (src/core/types.py)
-```python
-{types_file[:1000]}
-```
+{f"### 4. Add to {PROJECT_ROOT}/requirements.txt: '{library}'" if library else ""}
 
 ## RULES
-- Follow the EXACT patterns from the reference files
-- Use async/await for all I/O operations
-- Return ToolResult for every operation
-- Use os.getenv() for credentials, never hardcode
-- Keep the tool focused — only implement what build_instructions specify
-- Working directory is the project root: {PROJECT_ROOT}
-- Use absolute paths when writing files
+- Read existing files before modifying them
+- Use file_operations tool to write files (not bash echo/cat)
+- Use absolute paths: {PROJECT_ROOT}/...
+- Keep implementation focused and minimal
 """
     return prompt
 
@@ -183,9 +185,9 @@ async def build_talent(talent_name: str):
     print("━" * 52)
     print()
 
-    # Check if already built
+    # Check if already built (tool file exists = skip build)
     tool_file = PROJECT_ROOT / "src" / "core" / "tools" / f"{key}_tool.py"
-    if tool_file.exists() and not talent_config.get("coming_soon"):
+    if tool_file.exists():
         print(f"✅ {display_name} talent already exists!")
         print(f"   Tool: {tool_file}")
         print()
@@ -197,6 +199,8 @@ async def build_talent(talent_name: str):
             credentials = prompt_credentials(talent_config)
             if credentials:
                 save_credentials_to_env(credentials)
+        else:
+            print("   Credentials: ✅ configured")
         return True
 
     # Check for API key
