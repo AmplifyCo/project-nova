@@ -17,9 +17,11 @@ from src.core.brain.core_brain import CoreBrain
 from src.core.brain.digital_clone_brain import DigitalCloneBrain
 from src.core.spawner.agent_factory import AgentFactory
 from src.core.spawner.orchestrator import Orchestrator
+from src.core.conversation_manager import ConversationManager
 from src.integrations.anthropic_client import AnthropicClient
+from src.integrations.model_router import ModelRouter
+from src.channels.telegram_channel import TelegramChannel
 from src.utils.telegram_notifier import TelegramNotifier, TelegramCommandHandler
-from src.utils.telegram_chat import TelegramChat
 from src.utils.dashboard import Dashboard
 from src.utils.auto_updater import AutoUpdater
 
@@ -119,7 +121,7 @@ async def main():
             logger.info("   - Use orchestrator to spawn multiple sub-agents")
             logger.info("   - Monitor via Telegram commands or web dashboard")
 
-        # Initialize Telegram chat with webhooks
+        # Initialize Telegram chat with webhooks (using new channel-agnostic architecture)
         telegram_chat = None
         if telegram.enabled and config.telegram_bot_token and config.telegram_chat_id:
             # Check for Cloudflare tunnel URL first (HTTPS, permanent)
@@ -152,11 +154,22 @@ async def main():
                     webhook_url = None
                     logger.warning("Could not determine webhook URL")
 
-            telegram_chat = TelegramChat(
+            # Initialize ModelRouter for intelligent model selection
+            model_router = ModelRouter(config)
+
+            # Initialize ConversationManager (channel-agnostic core intelligence)
+            conversation_manager = ConversationManager(
+                agent=agent,
+                anthropic_client=api_client,
+                model_router=model_router,
+                brain=brain  # Auto-selected CoreBrain or DigitalCloneBrain
+            )
+
+            # Initialize TelegramChannel (thin transport wrapper)
+            telegram_chat = TelegramChannel(
                 bot_token=config.telegram_bot_token,
                 chat_id=config.telegram_chat_id,
-                anthropic_client=api_client,
-                agent=agent,
+                conversation_manager=conversation_manager,
                 webhook_url=webhook_url
             )
 
@@ -164,7 +177,7 @@ async def main():
             if dashboard.enabled:
                 dashboard.set_telegram_chat(telegram_chat)
 
-            logger.info("💬 Telegram chat interface initialized")
+            logger.info("💬 Telegram chat interface initialized (channel-agnostic architecture)")
 
         # Start dashboard server (non-blocking)
         dashboard_task = None
