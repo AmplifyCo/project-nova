@@ -158,7 +158,12 @@ class ConversationManager:
             # LAYER 12: RATE LIMITING
             # ========================================================================
             user_identifier = user_id or channel
-            is_allowed, rate_limit_reason = self.security_guard.check_rate_limit(user_identifier)
+            # More lenient rate limit: 60 requests per 120 seconds (30 req/min)
+            is_allowed, rate_limit_reason = self.security_guard.check_rate_limit(
+                user_identifier,
+                max_requests=60,
+                window_seconds=120
+            )
 
             if not is_allowed:
                 logger.warning(f"Rate limit exceeded for {user_identifier}")
@@ -275,11 +280,23 @@ class ConversationManager:
             )
 
         elif action in ["status", "git_pull", "git_update", "restart", "health", "logs"]:
-            # Known intents - delegate to agent handlers
+            # Known intents - delegate to specific handlers
             logger.info(f"Using intent handler for: {action}")
             self._last_model_used = "claude-sonnet-4-5"
-            # These would be implemented by the agent
-            return f"Intent recognized: {action}\n(Handler implementation needed)"
+
+            if action in ["git_pull", "git_update"]:
+                return await self._handle_git_update()
+            elif action == "restart":
+                return await self._handle_restart()
+            elif action == "status":
+                return await self._handle_status()
+            else:
+                # Use agent for other intents
+                return await self.agent.run(
+                    task=f"User request: {message}",
+                    max_iterations=10,
+                    system_prompt=await self._build_system_prompt(message)
+                )
 
         else:
             # Distinguish between QUESTIONS and ACTIONS
@@ -525,7 +542,12 @@ Return ONLY ONE WORD: build_feature, status, question, or action"""
                         system="You are an intent classifier. Return only the intent name, nothing else."
                     )
 
-                    intent_text = response["content"][0]["text"].strip().lower()
+                    # Handle both dict and object response formats
+                    content_item = response["content"][0]
+                    if isinstance(content_item, dict):
+                        intent_text = content_item.get("text", "").strip().lower()
+                    else:
+                        intent_text = getattr(content_item, "text", "").strip().lower()
 
                     # Parse the response
                     if "build_feature" in intent_text or "build" in intent_text:
@@ -545,7 +567,12 @@ Return ONLY ONE WORD: build_feature, status, question, or action"""
         # Fallback to keyword matching if local LLM unavailable or failed
         msg_lower = message.lower()
 
-        if any(word in msg_lower for word in ["status", "running"]):
+        # Check for specific intents first (more specific patterns)
+        if any(word in msg_lower for word in ["git pull", "git update", "update from git", "pull from git"]):
+            return {"action": "git_update", "confidence": 0.9, "parameters": {}}
+        elif any(word in msg_lower for word in ["restart", "reboot"]):
+            return {"action": "restart", "confidence": 0.9, "parameters": {}}
+        elif any(word in msg_lower for word in ["status", "running", "health"]):
             return {"action": "status", "confidence": 0.9, "parameters": {}}
         elif any(word in msg_lower for word in [
             "build", "create", "implement", "feature",
@@ -673,3 +700,86 @@ USER INPUT BEGINS BELOW:
                 logger.debug(f"Could not retrieve Brain context: {e}")
 
         return base_prompt + brain_context
+
+    # ========================================================================
+    # Intent Handlers
+    # ========================================================================
+
+    async def _handle_git_update(self) -> str:
+        """Handle git update request.
+
+        Returns:
+            Status message
+        """
+        try:
+            # Check if auto_updater exists
+            if not hasattr(self.agent, 'auto_updater') or not self.agent.auto_updater:
+                # Fallback: use agent with tools to do git pull
+                logger.info("Auto-updater not available, using agent with bash tool")
+                return await self.agent.run(
+                    task="Pull latest updates from git repository (git pull origin main) and check if requirements.txt changed. If it did, run pip install -r requirements.txt",
+                    max_iterations=10,
+                    system_prompt=await self._build_system_prompt("git update")
+                )
+
+            logger.info("Using AutoUpdater to check for git updates...")
+            updated = await self.agent.auto_updater.check_git_updates()
+
+            if updated:
+                return "✅ Successfully pulled updates from git! Restart to apply changes."
+            else:
+                return "✅ Already up-to-date with latest git version."
+
+        except Exception as e:
+            logger.error(f"Git update failed: {e}", exc_info=True)
+            return f"❌ Git update failed: {str(e)}"
+
+    async def _handle_restart(self) -> str:
+        """Handle restart request.
+
+        Returns:
+            Status message
+        """
+        try:
+            logger.info("Initiating restart...")
+
+            # Use agent's tools to restart the service
+            return await self.agent.run(
+                task="Restart the digital-twin systemd service using: sudo systemctl restart digital-twin",
+                max_iterations=5,
+                system_prompt=await self._build_system_prompt("restart")
+            )
+
+        except Exception as e:
+            logger.error(f"Restart failed: {e}", exc_info=True)
+            return f"❌ Restart failed: {str(e)}"
+
+    async def _handle_status(self) -> str:
+        """Handle status request.
+
+        Returns:
+            Status message with system information
+        """
+        try:
+            uptime = datetime.now() - self.agent.start_time if hasattr(self.agent, 'start_time') else None
+            uptime_str = f"{uptime.seconds // 3600}h {(uptime.seconds % 3600) // 60}m" if uptime else "Unknown"
+
+            status_parts = [
+                "🤖 **Digital Twin Status**\n",
+                f"**Uptime:** {uptime_str}",
+                f"**Model:** {self.agent.config.default_model}",
+                f"**Last Model Used:** {self._last_model_used}",
+            ]
+
+            # Add brain info
+            brain_type = self.get_current_brain()
+            status_parts.append(f"**Brain:** {brain_type}")
+
+            # Add security info
+            status_parts.append(f"**Security:** 13 layers active 🔒")
+
+            return "\n".join(status_parts)
+
+        except Exception as e:
+            logger.error(f"Status check failed: {e}", exc_info=True)
+            return f"❌ Status check failed: {str(e)}"
