@@ -133,6 +133,12 @@ Check logs for successful tool registration:
 - `dt-setup email` - Update email settings
 - `dt-setup telegram` - Update Telegram settings
 - `dt-setup calendar` - Update calendar settings
+- `dt-setup tunnel` - Update Cloudflare Tunnel settings
+
+**Tunnel Management:**
+- `dt-setup tunnel-start` - Start Cloudflare Tunnel
+- `dt-setup tunnel-stop` - Stop Cloudflare Tunnel
+- `dt-setup tunnel-status` - Check tunnel status
 
 ## Manual Setup
 
@@ -161,6 +167,7 @@ dt-setup core              # API keys only
 dt-setup telegram          # Telegram only
 dt-setup email             # Email only
 dt-setup calendar          # Calendar only
+dt-setup tunnel            # Cloudflare Tunnel only
 dt-setup help              # Show help
 ```
 
@@ -175,6 +182,7 @@ python configure.py --email-only              # Email only
 python configure.py --calendar-only           # Calendar only
 python configure.py --core-only               # API keys only
 python configure.py --telegram-only           # Telegram only
+python configure.py --tunnel-only             # Cloudflare Tunnel only
 python configure.py --env-file /path/to/.env  # Custom .env location
 ```
 
@@ -225,6 +233,59 @@ Once configured, test the tools:
 - "Show me this week's appointments"
 - "Create appointment for tomorrow at 2pm titled 'Team meeting'"
 - "List my events for the next 7 days"
+
+## Cloudflare Tunnel Setup (Optional)
+
+Cloudflare Tunnel securely exposes your Digital Twin bot to the internet without port forwarding or firewall configuration.
+
+### Quick Setup
+
+1. **Get your tunnel token:**
+   - Go to: https://one.dash.cloudflare.com/
+   - Navigate to: **Zero Trust > Networks > Tunnels**
+   - Create a new tunnel or select existing
+   - Copy the tunnel token
+
+2. **Configure the tunnel:**
+   ```bash
+   dt-setup tunnel
+   ```
+   - Paste your tunnel token when prompted
+   - Specify local service URL (e.g., http://localhost:8000)
+
+3. **Start the tunnel:**
+   ```bash
+   dt-setup tunnel-start
+   ```
+
+4. **Check tunnel status:**
+   ```bash
+   dt-setup tunnel-status
+   ```
+
+5. **Stop the tunnel:**
+   ```bash
+   dt-setup tunnel-stop
+   ```
+
+### Use Cases
+
+- **Telegram Webhooks:** Faster response than polling
+- **Remote Access:** Access your bot from anywhere
+- **Web Dashboard:** Share your bot's web interface
+- **API Endpoints:** Expose REST API to external services
+
+### Tunnel Management
+
+The tunnel runs as a background process and logs to `logs/tunnel.log`.
+
+**Common commands:**
+```bash
+dt-setup tunnel-start     # Start tunnel in background
+dt-setup tunnel-stop      # Stop tunnel
+dt-setup tunnel-status    # Check if tunnel is running
+dt-setup tunnel           # Update tunnel configuration
+```
 
 ## Troubleshooting
 

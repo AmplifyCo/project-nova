@@ -72,6 +72,59 @@ check_python() {
 }
 
 # ============================================
+# Check and install cloudflared if needed
+# ============================================
+check_and_install_cloudflared() {
+    if ! command -v cloudflared &> /dev/null; then
+        echo ""
+        echo "📦 cloudflared not found. Installing Cloudflare Tunnel..."
+        echo ""
+
+        # Detect OS and install cloudflared
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS
+            if command -v brew &> /dev/null; then
+                brew install cloudflared
+            else
+                echo "⚠️  Homebrew not found. Installing via download..."
+                curl -L --output /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64
+                sudo chmod +x /usr/local/bin/cloudflared
+            fi
+        elif [[ -f /etc/os-release ]]; then
+            . /etc/os-release
+            if [[ "$ID" == "amzn" ]] || [[ "$ID_LIKE" == *"rhel"* ]]; then
+                # Amazon Linux / RHEL-based
+                wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.rpm
+                sudo rpm -i cloudflared-linux-amd64.rpm
+                rm -f cloudflared-linux-amd64.rpm
+            elif [[ "$ID" == "ubuntu" ]] || [[ "$ID" == "debian" ]] || [[ "$ID_LIKE" == *"debian"* ]]; then
+                # Debian/Ubuntu
+                wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+                sudo dpkg -i cloudflared-linux-amd64.deb
+                rm -f cloudflared-linux-amd64.deb
+            else
+                echo "⚠️  Unsupported Linux distribution: $ID"
+                echo "   Please install cloudflared manually: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/"
+                return 1
+            fi
+        else
+            echo "⚠️  Unsupported operating system"
+            echo "   Please install cloudflared manually: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/"
+            return 1
+        fi
+
+        # Verify installation
+        if ! command -v cloudflared &> /dev/null; then
+            echo "❌ cloudflared installation failed"
+            return 1
+        fi
+
+        echo "✅ cloudflared installed successfully!"
+    fi
+    return 0
+}
+
+# ============================================
 # Self-installation check
 # ============================================
 install_globally() {
@@ -242,6 +295,95 @@ case "$1" in
         # Calendar configuration
         python3 "$CONFIGURE_PY" --calendar-only
         ;;
+    "tunnel"|"cf"|"cloudflare")
+        # Cloudflare Tunnel configuration
+        python3 "$CONFIGURE_PY" --tunnel-only
+        ;;
+    "tunnel-start")
+        # Start Cloudflare Tunnel
+        echo ""
+        echo "🌐 Starting Cloudflare Tunnel..."
+        echo ""
+
+        # Check if cloudflared is installed
+        if ! command -v cloudflared &> /dev/null; then
+            echo "⚠️  cloudflared not found. Installing..."
+            check_and_install_cloudflared
+        fi
+
+        # Check if tunnel token is configured
+        if [ -f "$SCRIPT_DIR/.env" ]; then
+            TUNNEL_TOKEN=$(grep "^CLOUDFLARE_TUNNEL_TOKEN=" "$SCRIPT_DIR/.env" | cut -d'=' -f2)
+            if [ -z "$TUNNEL_TOKEN" ]; then
+                echo "❌ Tunnel token not found in .env file"
+                echo "   Run: dt-setup tunnel"
+                exit 1
+            fi
+
+            # Start tunnel
+            echo "Starting tunnel in background..."
+            nohup cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN" > "$SCRIPT_DIR/logs/tunnel.log" 2>&1 &
+            echo $! > "$SCRIPT_DIR/tunnel.pid"
+            echo "✅ Tunnel started (PID: $!)"
+            echo "   Logs: $SCRIPT_DIR/logs/tunnel.log"
+        else
+            echo "❌ .env file not found"
+            echo "   Run: dt-setup tunnel"
+            exit 1
+        fi
+        echo ""
+        ;;
+    "tunnel-stop")
+        # Stop Cloudflare Tunnel
+        echo ""
+        echo "🛑 Stopping Cloudflare Tunnel..."
+        echo ""
+
+        if [ -f "$SCRIPT_DIR/tunnel.pid" ]; then
+            PID=$(cat "$SCRIPT_DIR/tunnel.pid")
+            if kill -0 "$PID" 2>/dev/null; then
+                kill "$PID"
+                rm -f "$SCRIPT_DIR/tunnel.pid"
+                echo "✅ Tunnel stopped (PID: $PID)"
+            else
+                echo "⚠️  Tunnel process not found (stale PID)"
+                rm -f "$SCRIPT_DIR/tunnel.pid"
+            fi
+        elif pgrep -f "cloudflared tunnel" > /dev/null; then
+            pkill -f "cloudflared tunnel"
+            echo "✅ Tunnel stopped"
+        else
+            echo "⚠️  Tunnel is not running"
+        fi
+        echo ""
+        ;;
+    "tunnel-status")
+        # Check Cloudflare Tunnel status
+        echo ""
+        echo "🌐 Cloudflare Tunnel Status"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        if [ -f "$SCRIPT_DIR/tunnel.pid" ]; then
+            PID=$(cat "$SCRIPT_DIR/tunnel.pid")
+            if kill -0 "$PID" 2>/dev/null; then
+                echo "✅ Status: Running (PID: $PID)"
+                ps aux | grep "[c]loudflared"
+            else
+                echo "❌ Status: Not running (stale PID)"
+                rm -f "$SCRIPT_DIR/tunnel.pid"
+            fi
+        elif pgrep -f "cloudflared tunnel" > /dev/null; then
+            echo "✅ Status: Running"
+            ps aux | grep "[c]loudflared"
+        else
+            echo "❌ Status: Not running"
+            echo ""
+            echo "To start the tunnel:"
+            echo "  dt-setup tunnel-start"
+        fi
+        echo ""
+        ;;
     "start"|"run")
         # Start the bot
         echo ""
@@ -354,6 +496,12 @@ Usage:
   dt-setup telegram       Configure Telegram bot only
   dt-setup email          Configure email only
   dt-setup calendar       Configure calendar only
+  dt-setup tunnel         Configure Cloudflare Tunnel only
+
+  Tunnel Management:
+  dt-setup tunnel-start   Start Cloudflare Tunnel
+  dt-setup tunnel-stop    Stop Cloudflare Tunnel
+  dt-setup tunnel-status  Check tunnel status
 
 Aliases:
   digital-twin, all, full → Full setup
@@ -362,6 +510,7 @@ Aliases:
   telegram, tg            → Telegram configuration
   email, mail             → Email configuration
   calendar, cal           → Calendar configuration
+  tunnel, cf, cloudflare  → Cloudflare Tunnel configuration
 
 Examples:
   dt-setup                # Full wizard
@@ -370,6 +519,9 @@ Examples:
   dt-setup restart        # Restart the bot
   dt-setup status         # Check if running
   dt-setup email          # Update email settings
+  dt-setup tunnel         # Configure Cloudflare Tunnel
+  dt-setup tunnel-start   # Start tunnel
+  dt-setup tunnel-stop    # Stop tunnel
 
 First-time setup (TWO commands!):
   git clone https://github.com/AmplifyCo/digital-twin.git

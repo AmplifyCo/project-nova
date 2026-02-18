@@ -10,6 +10,7 @@ Usage:
     python configure.py --email-only       # Configure email only
     python configure.py --calendar-only    # Configure calendar only
     python configure.py --telegram-only    # Configure Telegram only
+    python configure.py --tunnel-only      # Configure Cloudflare Tunnel only
 """
 
 import os
@@ -376,7 +377,60 @@ class ConfigurationWizard:
 
         print("\n✅ Calendar configuration complete!")
 
-    def run(self, core_only=False, telegram_only=False, email_only=False, calendar_only=False):
+    def configure_cloudflare_tunnel(self):
+        """Configure Cloudflare Tunnel settings."""
+        self.print_header("🌐 CLOUDFLARE TUNNEL CONFIGURATION")
+
+        print("\nCloudflare Tunnel exposes your Digital Twin bot to the internet securely.")
+        print("Perfect for webhooks, remote access, or sharing with others.\n")
+
+        print("📋 How to get your tunnel token:")
+        print("   1. Go to: https://one.dash.cloudflare.com/")
+        print("   2. Navigate to: Zero Trust > Networks > Tunnels")
+        print("   3. Create a new tunnel (or select existing)")
+        print("   4. Copy the tunnel token from the setup page")
+        print("   5. Paste it here\n")
+
+        # Check if tunnel token already exists
+        current_token = self.config.get('CLOUDFLARE_TUNNEL_TOKEN', '')
+        if current_token:
+            print(f"Current Tunnel Token: {current_token[:20]}...{current_token[-10:]}")
+            update = self.get_input("Update Cloudflare tunnel token? (y/n)", default="n")
+            if update.lower() not in ['y', 'yes']:
+                print("✅ Keeping existing tunnel token")
+                return
+
+        # Get tunnel token
+        tunnel_token = self.get_input("Enter Cloudflare tunnel token (or leave empty to skip)", required=False)
+
+        if not tunnel_token:
+            print("\n⏭️  Skipping Cloudflare Tunnel configuration")
+            return
+
+        self.config['CLOUDFLARE_TUNNEL_TOKEN'] = tunnel_token
+
+        # Optional: Local service URL
+        print("\n📋 Local service configuration:")
+        print("   What local service should the tunnel expose?")
+        print("   Examples:")
+        print("     • http://localhost:8000 (web interface)")
+        print("     • http://localhost:5000 (API server)")
+        print("     • Leave empty to configure manually later\n")
+
+        local_url = self.get_input(
+            "Local service URL",
+            default="http://localhost:8000",
+            required=False
+        )
+
+        if local_url:
+            self.config['CLOUDFLARE_TUNNEL_LOCAL_URL'] = local_url
+            print(f"\n✅ Tunnel will expose: {local_url}")
+
+        print("\n✅ Cloudflare Tunnel configuration complete!")
+        print("\n💡 Note: Run 'dt-setup tunnel start' to start the tunnel after setup")
+
+    def run(self, core_only=False, telegram_only=False, email_only=False, calendar_only=False, tunnel_only=False):
         """Run the configuration wizard."""
         print("\n" + "=" * 60)
         print("  🤖 Digital Twin Configuration Wizard")
@@ -384,32 +438,39 @@ class ConfigurationWizard:
         print("\nThis wizard will help you set up:")
         print("  • Core API credentials (Anthropic)")
         print("  • Communication tools (Telegram, Email, Calendar)")
+        print("  • Cloudflare Tunnel (optional)")
         print("  • Sensitive passwords and tokens")
         print(f"\nConfiguration will be saved to: {self.env_path}")
 
         # Core configuration (API keys)
-        if not any([telegram_only, email_only, calendar_only]):
+        if not any([telegram_only, email_only, calendar_only, tunnel_only]):
             setup_core = self.get_input("\nConfigure core API keys? (y/n)", default="y")
             if setup_core.lower() in ['y', 'yes']:
                 self.configure_core()
 
         # Telegram configuration
-        if not any([core_only, email_only, calendar_only]):
+        if not any([core_only, email_only, calendar_only, tunnel_only]):
             setup_telegram = self.get_input("\nConfigure Telegram bot? (y/n)", default="n")
             if setup_telegram.lower() in ['y', 'yes']:
                 self.configure_telegram()
 
         # Email configuration
-        if not any([core_only, telegram_only, calendar_only]):
+        if not any([core_only, telegram_only, calendar_only, tunnel_only]):
             setup_email = self.get_input("\nConfigure email? (y/n)", default="n")
             if setup_email.lower() in ['y', 'yes']:
                 self.configure_email()
 
         # Calendar configuration
-        if not any([core_only, telegram_only, email_only]):
+        if not any([core_only, telegram_only, email_only, tunnel_only]):
             setup_calendar = self.get_input("\nConfigure calendar? (y/n)", default="n")
             if setup_calendar.lower() in ['y', 'yes']:
                 self.configure_calendar()
+
+        # Cloudflare Tunnel configuration
+        if not any([core_only, telegram_only, email_only, calendar_only]):
+            setup_tunnel = self.get_input("\nConfigure Cloudflare Tunnel? (y/n)", default="n")
+            if setup_tunnel.lower() in ['y', 'yes']:
+                self.configure_cloudflare_tunnel()
 
         # Save configuration
         self.save_config()
@@ -425,6 +486,8 @@ class ConfigurationWizard:
         print("     • 📧 Email tool registered (if configured)")
         print("     • 📅 Calendar tool registered (if configured)")
         print("     • 💬 Telegram bot started (if configured)")
+        if 'CLOUDFLARE_TUNNEL_TOKEN' in self.config:
+            print("     • 🌐 Cloudflare Tunnel (run 'dt-setup tunnel start')")
         print("\nTest your configuration:")
         print("  • Telegram: Send /start to your bot")
         print("  • Email: 'Check my emails'")
@@ -439,7 +502,8 @@ def main():
         epilog='Examples:\n'
                '  python configure.py              # Full setup wizard\n'
                '  python configure.py --core-only  # Configure API keys only\n'
-               '  python configure.py --email-only # Configure email only\n',
+               '  python configure.py --email-only # Configure email only\n'
+               '  python configure.py --tunnel-only # Configure Cloudflare Tunnel only\n',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
@@ -463,6 +527,11 @@ def main():
         help='Configure calendar only'
     )
     parser.add_argument(
+        '--tunnel-only',
+        action='store_true',
+        help='Configure Cloudflare Tunnel only'
+    )
+    parser.add_argument(
         '--env-file',
         default='.env',
         help='Path to .env file (default: .env)'
@@ -475,7 +544,8 @@ def main():
         core_only=args.core_only,
         telegram_only=args.telegram_only,
         email_only=args.email_only,
-        calendar_only=args.calendar_only
+        calendar_only=args.calendar_only,
+        tunnel_only=args.tunnel_only
     )
 
 
