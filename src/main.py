@@ -109,6 +109,15 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             logger.info("🧠 Initializing DigitalCloneBrain for production...")
             brain = DigitalCloneBrain(config.digital_clone_brain_path)
 
+        # ALWAYS initialize DigitalCloneBrain for conversations/learning
+        # Even in build mode, the bot needs to remember user preferences,
+        # learn from conversations, and maintain personality
+        if config.self_build_mode:
+            logger.info("🧠 Also initializing DigitalCloneBrain for conversations...")
+            digital_brain = DigitalCloneBrain(config.digital_clone_brain_path)
+        else:
+            digital_brain = brain  # Already a DigitalCloneBrain
+
         # Initialize monitoring systems
         logger.info("📊 Initializing monitoring systems...")
         telegram = TelegramNotifier(config.telegram_bot_token, config.telegram_chat_id)
@@ -126,6 +135,9 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         logger.info("🤖 Initializing autonomous agent...")
         agent = AutonomousAgent(config, brain)
         agent.start_time = datetime.now()  # Track start time for uptime
+        agent.digital_brain = digital_brain  # For ConversationManager to use
+        if config.self_build_mode:
+            agent.core_brain = brain  # CoreBrain for build tasks
 
         # Initialize sub-agent spawner
         api_client = AnthropicClient(config.api_key)

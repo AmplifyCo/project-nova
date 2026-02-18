@@ -75,25 +75,17 @@ class ConversationManager:
         self.anthropic_client = anthropic_client
         self.router = model_router
 
-        # SELECT BRAIN BASED ON AGENT MODE
+        # ALWAYS use DigitalCloneBrain for conversations
+        # ConversationManager handles user interactions → needs preferences, learning, personality
+        # CoreBrain is only for build tasks (agent.run with build_feature intent)
         if brain:
-            # Explicit brain provided
             self.brain = brain
             brain_type = brain.__class__.__name__
         else:
-            # Auto-select based on mode
-            agent_mode = getattr(agent.config, 'mode', 'assistant')
-
-            if agent_mode == "build":
-                # BUILD MODE: Use CoreBrain for self-building
-                self.brain = getattr(agent, 'core_brain', None)
-                brain_type = "CoreBrain"
-                logger.info("BUILD MODE detected - using CoreBrain for build tracking")
-            else:
-                # ASSISTANT MODE: Use DigitalCloneBrain for operations
-                self.brain = getattr(agent, 'digital_brain', None) or getattr(agent, 'brain', None)
-                brain_type = "DigitalCloneBrain"
-                logger.info("ASSISTANT MODE detected - using DigitalCloneBrain for conversations")
+            # Prefer DigitalCloneBrain — it has preferences, contacts, conversation memory
+            self.brain = getattr(agent, 'digital_brain', None) or getattr(agent, 'brain', None)
+            brain_type = self.brain.__class__.__name__ if self.brain else "None"
+            logger.info(f"ConversationManager using {brain_type} for conversations and learning")
 
         self._last_model_used = "claude-sonnet-4-5"
 
