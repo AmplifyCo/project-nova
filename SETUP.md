@@ -82,9 +82,13 @@ Enter app password: [hidden]
 
 🎉 Setup Complete!
 
-Next steps:
-  1. Verify your .env file
-  2. Start the bot: python -m src.main
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Start the bot now? [Y/n]: y
+
+🚀 Starting Digital Twin bot...
+
+[Bot starts running...]
 ```
 
 ## Detailed Setup

@@ -121,15 +121,53 @@ if [[ "$1" != "--help" && "$1" != "-h" && "$1" != "help" ]]; then
     check_and_install_dependencies
 fi
 
+# ============================================
+# Start bot helper
+# ============================================
+start_bot_if_requested() {
+    # Only offer to start for full setup (not partial configs)
+    if [[ "$1" == "" || "$1" == "digital-twin" || "$1" == "all" || "$1" == "full" ]]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        read -p "Start the bot now? [Y/n]: " start_choice
+        start_choice=${start_choice:-Y}
+
+        if [[ "$start_choice" =~ ^[Yy]$ ]]; then
+            echo ""
+            echo "🚀 Starting Digital Twin bot..."
+            echo ""
+
+            # Check if we're in the right directory
+            if [ -f "$SCRIPT_DIR/src/main.py" ]; then
+                cd "$SCRIPT_DIR"
+                python3 -m src.main
+            else
+                echo "❌ Error: src/main.py not found"
+                echo "   Please run manually: python -m src.main"
+            fi
+        else
+            echo ""
+            echo "✅ Setup complete!"
+            echo ""
+            echo "To start the bot later, run:"
+            echo "  python -m src.main"
+            echo ""
+        fi
+    fi
+}
+
 # Parse arguments and map to configure.py flags
 case "$1" in
     "")
         # No arguments - run full wizard
         python3 "$CONFIGURE_PY"
+        start_bot_if_requested ""
         ;;
     "digital-twin"|"all"|"full")
         # Full setup
         python3 "$CONFIGURE_PY"
+        start_bot_if_requested "$1"
         ;;
     "core"|"api"|"keys")
         # Core API keys
@@ -189,7 +227,8 @@ First-time setup (TWO commands!):
   • Asks for Claude API key
   • Asks for Gmail credentials (optional)
   • Configures everything
-  • Bot is ready to run!
+  • Offers to start the bot immediately
+  • Bot is running!
 
 After first run:
   dt-setup                # Works from anywhere (like git, python)
