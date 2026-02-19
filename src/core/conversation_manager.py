@@ -110,6 +110,11 @@ class ConversationManager:
         self.PROMPT_VERSION = "2.0"  # Bump when system prompt changes significantly
         self.TOOL_SCHEMA_VERSION = "1.1"  # Bump when tool definitions change
 
+        # Pending proposal: when the bot proposes an action ("Want me to delete those 3 emails?"),
+        # store the action description here. "yes"/"do it" retrieves and executes it.
+        # This bypasses history truncation — the proposal is stored in memory, not chat history.
+        self._pending_proposal: Optional[str] = None
+
         # Per-session locking: prevents concurrent processing of same user's messages
         self._session_locks: Dict[str, asyncio.Lock] = {}
 
@@ -477,6 +482,9 @@ class ConversationManager:
             self._last_model_used = "claude-sonnet-4-5"
             response = await self._chat(message)
 
+            # Store proposal if bot is asking for confirmation
+            self._store_pending_proposal(response)
+
             # LEARN: Extract preferences/facts from conversational messages
             await self._learn_from_conversation(message, response)
             return response
@@ -485,7 +493,11 @@ class ConversationManager:
             # Unknown — default to chat
             logger.info("Unknown intent - defaulting to chat")
             self._last_model_used = "claude-sonnet-4-5"
-            return await self._chat(message)
+            response = await self._chat(message)
+
+            # Store proposal if bot is asking for confirmation
+            self._store_pending_proposal(response)
+            return response
 
     async def _execute_with_fallback_model(
         self,
@@ -820,6 +832,19 @@ User says "good morning" → none"""
         Returns:
             Intent dict
         """
+        # SHORTCUT: If user confirms a pending proposal, execute it directly
+        # (bypasses history truncation — proposal is stored in memory, not chat history)
+        if self._pending_proposal and self._is_confirmation(message):
+            logger.info(f"Confirmation detected, executing pending proposal: {self._pending_proposal}")
+            proposal = self._pending_proposal
+            self._pending_proposal = None  # consumed
+            return {
+                "action": "action",
+                "confidence": 0.95,
+                "inferred_task": proposal,
+                "_conversation_history": "",
+            }
+
         # Gather recent conversation history for context-aware classification
         conversation_history = await self._get_recent_history_for_intent()
 
@@ -872,6 +897,39 @@ User says "good morning" → none"""
         except Exception as e:
             logger.debug(f"Could not get history for intent: {e}")
             return ""
+
+    # -------------------------------------------------------------------------
+    # PENDING PROPOSAL: store bot proposals so "yes" can execute them reliably
+    # (bypasses history truncation — stored in memory, not chat history)
+    # -------------------------------------------------------------------------
+
+    _PROPOSAL_PATTERNS = [
+        r"want me to\b", r"shall i\b", r"should i\b", r"go ahead and\b",
+        r"would you like me to\b", r"can i\b", r"may i\b",
+        r"ready to\b.*\?", r"confirm.*\?", r"proceed.*\?",
+    ]
+    _CONFIRMATION_WORDS = {
+        "yes", "yep", "yeah", "yup", "sure", "ok", "okay", "do it",
+        "go ahead", "go for it", "confirm", "confirmed", "proceed",
+        "please", "yes please", "affirmative", "absolutely", "correct",
+    }
+
+    def _store_pending_proposal(self, response: str):
+        """If the bot's response contains a proposal question, store it as pending."""
+        last_sentence = response.strip().split("\n")[-1].strip().lower()
+        for pattern in self._PROPOSAL_PATTERNS:
+            if re.search(pattern, last_sentence, re.IGNORECASE):
+                # Store full response tail as context (last 300 chars captures the proposal)
+                self._pending_proposal = response.strip()[-300:]
+                logger.debug(f"Stored pending proposal ({len(self._pending_proposal)} chars)")
+                return
+        # No proposal detected — clear any stale pending proposal
+        self._pending_proposal = None
+
+    def _is_confirmation(self, message: str) -> bool:
+        """Return True if message is a short confirmation of a pending proposal."""
+        cleaned = message.strip().lower().rstrip("!.")
+        return cleaned in self._CONFIRMATION_WORDS or len(cleaned) <= 3 and cleaned in ("y", "ok")
 
     async def _parse_intent(self, message: str, conversation_history: str = "") -> Dict[str, Any]:
         """Parse user intent using LLM (model-agnostic — works with any fast LLM).
