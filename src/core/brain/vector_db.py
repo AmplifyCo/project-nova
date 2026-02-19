@@ -1,10 +1,13 @@
 """ChromaDB vector database wrapper."""
 
 import asyncio
+import shutil
 import chromadb
 from chromadb.config import Settings
+from chromadb.errors import InternalError
 import logging
 import uuid
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -28,23 +31,46 @@ class VectorDatabase:
         """
         self.path = path
         self.collection_name = collection_name
+        self.embedding_model = embedding_model
 
-        # Initialize ChromaDB client
+        self._init_client(path, collection_name, embedding_model)
+        logger.info(f"Initialized vector DB at {path}, collection: {collection_name}")
+
+    def _init_client(self, path: str, collection_name: str, embedding_model: str):
+        """Initialize ChromaDB client, auto-recovering from corruption if needed."""
+        try:
+            self.client = chromadb.PersistentClient(
+                path=path,
+                settings=Settings(anonymized_telemetry=False)
+            )
+            self._enable_wal_mode(path)
+            self.collection = self.client.get_or_create_collection(
+                name=collection_name,
+                metadata={"embedding_model": embedding_model}
+            )
+        except (InternalError, Exception) as e:
+            if "compaction" in str(e).lower() or "purging" in str(e).lower() or "corrupt" in str(e).lower():
+                logger.warning(f"ChromaDB corrupted at {path}, auto-recovering: {e}")
+                self._wipe_and_reinit(path, collection_name, embedding_model)
+            else:
+                raise
+
+    def _wipe_and_reinit(self, path: str, collection_name: str, embedding_model: str):
+        """Delete corrupted ChromaDB data and reinitialize fresh."""
+        db_path = Path(path)
+        if db_path.exists():
+            shutil.rmtree(db_path)
+            logger.info(f"Wiped corrupted ChromaDB at {path}")
+        db_path.mkdir(parents=True, exist_ok=True)
         self.client = chromadb.PersistentClient(
             path=path,
             settings=Settings(anonymized_telemetry=False)
         )
-
-        # Enable WAL mode on ChromaDB's underlying SQLite for concurrent read/write
-        self._enable_wal_mode(path)
-
-        # Get or create collection
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
             metadata={"embedding_model": embedding_model}
         )
-
-        logger.info(f"Initialized vector DB at {path}, collection: {collection_name}")
+        logger.info(f"Reinitialized fresh ChromaDB at {path}")
 
     @staticmethod
     def _enable_wal_mode(path: str):
@@ -85,14 +111,26 @@ class VectorDatabase:
             doc_id = str(uuid.uuid4())
 
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: self.collection.add(
-                documents=[text],
-                metadatas=[metadata or {}],
-                ids=[doc_id]
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: self.collection.add(
+                    documents=[text],
+                    metadatas=[metadata or {}],
+                    ids=[doc_id]
+                )
             )
-        )
+        except InternalError as e:
+            logger.warning(f"ChromaDB write failed ({e}), recovering and retrying...")
+            self._wipe_and_reinit(self.path, self.collection_name, self.embedding_model)
+            await loop.run_in_executor(
+                None,
+                lambda: self.collection.add(
+                    documents=[text],
+                    metadatas=[metadata or {}],
+                    ids=[doc_id]
+                )
+            )
 
         logger.debug(f"Stored document {doc_id}")
         return doc_id
