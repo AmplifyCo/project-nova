@@ -1,7 +1,8 @@
 """Contacts tool — save, search, list, and delete contacts with relationships.
 
-Contacts are stored in DigitalCloneBrain's collective consciousness so they're
-accessible across all channels (Telegram, WhatsApp, Email, etc.).
+Contacts are stored in TWO places for resilience:
+1. PRIMARY: JSON file at data/contacts.json (reliable, survives ChromaDB corruption)
+2. SECONDARY: DigitalCloneBrain's ChromaDB (for semantic search enrichment)
 
 When a user says "text Mom" or "email John", the system can look up the contact
 to resolve names to phone numbers and email addresses.
@@ -9,18 +10,22 @@ to resolve names to phone numbers and email addresses.
 
 import json
 import logging
-from typing import Optional, Dict, Any
+from pathlib import Path
+from typing import Optional, Dict, Any, List
 from .base import BaseTool
 from ..types import ToolResult
 
 logger = logging.getLogger(__name__)
 
+# Primary contacts storage (JSON file)
+CONTACTS_FILE = Path("data/contacts.json")
+
 
 class ContactsTool(BaseTool):
     """Tool for managing contacts with relationships and contact info.
 
-    Stores contacts in DigitalCloneBrain's vector database so they
-    appear in context when the user mentions someone by name.
+    Uses a JSON file as primary storage (reliable, simple, no corruption).
+    ChromaDB is secondary — used for semantic enrichment only.
     """
 
     name = "contacts"
@@ -62,9 +67,37 @@ class ContactsTool(BaseTool):
         """Initialize contacts tool.
 
         Args:
-            digital_brain: DigitalCloneBrain instance for storage
+            digital_brain: DigitalCloneBrain instance for ChromaDB (secondary)
         """
         self.brain = digital_brain
+        self._contacts = self._load_contacts()
+        logger.info(f"📇 Contacts loaded: {len(self._contacts)} from {CONTACTS_FILE}")
+
+    # ── JSON File Operations (Primary Store) ────────────────────────────
+
+    def _load_contacts(self) -> Dict[str, Dict[str, Any]]:
+        """Load contacts from JSON file. Returns dict keyed by lowercase name."""
+        try:
+            CONTACTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            if CONTACTS_FILE.exists():
+                with open(CONTACTS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    # Ensure keys are lowercase for consistent lookup
+                    return {k.lower(): v for k, v in data.items()}
+        except Exception as e:
+            logger.warning(f"Failed to load contacts file: {e}")
+        return {}
+
+    def _save_contacts(self):
+        """Persist contacts dict to JSON file."""
+        try:
+            CONTACTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(CONTACTS_FILE, "w", encoding="utf-8") as f:
+                json.dump(self._contacts, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Failed to save contacts file: {e}")
+
+    # ── Tool Interface ──────────────────────────────────────────────────
 
     def to_anthropic_tool(self) -> Dict[str, Any]:
         """Override to make only 'operation' required."""
@@ -89,9 +122,6 @@ class ContactsTool(BaseTool):
         **kwargs
     ) -> ToolResult:
         """Execute contacts operation."""
-        if not self.brain:
-            return ToolResult(success=False, error="Contacts tool not configured (no brain)")
-
         try:
             if operation == "save_contact":
                 return await self._save_contact(name, relationship, phone, email, notes)
@@ -107,6 +137,8 @@ class ContactsTool(BaseTool):
             logger.error(f"Contacts operation error: {e}", exc_info=True)
             return ToolResult(success=False, error=f"Contacts operation failed: {str(e)}")
 
+    # ── Operations ──────────────────────────────────────────────────────
+
     async def _save_contact(
         self,
         name: Optional[str],
@@ -119,28 +151,45 @@ class ContactsTool(BaseTool):
         if not name:
             return ToolResult(success=False, error="Name is required to save a contact")
 
-        # Build preferences dict for DigitalCloneBrain.remember_person()
-        preferences = {}
+        # Clean phone number
+        clean_phone = None
         if phone:
             clean_phone = phone.replace("+", "").replace("-", "").replace(" ", "").replace("(", "").replace(")", "")
-            preferences["phone"] = clean_phone
-        if email:
-            preferences["email"] = email
-        if notes:
-            preferences["notes"] = notes
 
-        await self.brain.remember_person(
-            name=name,
-            relationship=relationship or "unknown",
-            preferences=preferences
-        )
+        # Build contact record
+        key = name.lower()
+        contact = {
+            "name": name,
+            "relationship": relationship or "unknown",
+        }
+        if clean_phone:
+            contact["phone"] = clean_phone
+        if email:
+            contact["email"] = email
+        if notes:
+            contact["notes"] = notes
+
+        # PRIMARY: Save to JSON file
+        self._contacts[key] = contact
+        self._save_contacts()
+
+        # SECONDARY: Also save to ChromaDB for semantic enrichment (non-critical)
+        if self.brain:
+            try:
+                await self.brain.remember_person(
+                    name=name,
+                    relationship=relationship or "unknown",
+                    preferences={k: v for k, v in contact.items() if k not in ("name", "relationship")}
+                )
+            except Exception as e:
+                logger.warning(f"ChromaDB contact save failed (non-critical, JSON is primary): {e}")
 
         # Build confirmation
         parts = [f"Saved contact: {name}"]
         if relationship:
             parts.append(f"Relationship: {relationship}")
-        if phone:
-            parts.append(f"Phone: {preferences.get('phone', phone)}")
+        if clean_phone:
+            parts.append(f"Phone: {clean_phone}")
         if email:
             parts.append(f"Email: {email}")
         if notes:
@@ -155,53 +204,48 @@ class ContactsTool(BaseTool):
         if not query:
             return ToolResult(success=False, error="Search query is required (name or keyword)")
 
-        results = await self.brain.contacts.search(query, n_results=5)
+        query_lower = query.lower()
+        matches = []
 
-        if not results:
+        # Search JSON contacts (exact and fuzzy match)
+        for key, contact in self._contacts.items():
+            # Match on name, relationship, phone, email, notes
+            searchable = " ".join(str(v).lower() for v in contact.values())
+            if query_lower in searchable or query_lower in key:
+                matches.append(contact)
+
+        if not matches:
             return ToolResult(success=True, output=f"No contacts found matching '{query}'")
 
-        lines = [f"Found {len(results)} contact(s):"]
-        for r in results:
-            meta = r.get("metadata", {})
-            name = meta.get("name", "Unknown")
-            rel = meta.get("relationship", "")
-            phone = meta.get("phone", "")
-            email_addr = meta.get("email", "")
-
-            line = f"• {name}"
+        lines = [f"Found {len(matches)} contact(s):"]
+        for contact in matches:
+            line = f"• {contact.get('name', 'Unknown')}"
+            rel = contact.get("relationship", "")
             if rel:
                 line += f" ({rel})"
-            if phone:
-                line += f" | Phone: {phone}"
-            if email_addr:
-                line += f" | Email: {email_addr}"
+            if contact.get("phone"):
+                line += f" | Phone: {contact['phone']}"
+            if contact.get("email"):
+                line += f" | Email: {contact['email']}"
             lines.append(line)
 
         return ToolResult(success=True, output="\n".join(lines))
 
     async def _list_contacts(self) -> ToolResult:
         """List all contacts."""
-        # Search with a broad query to get all contacts
-        results = await self.brain.contacts.search("contact person", n_results=50)
-
-        if not results:
+        if not self._contacts:
             return ToolResult(success=True, output="No contacts saved yet.")
 
-        lines = [f"All contacts ({len(results)}):"]
-        for r in results:
-            meta = r.get("metadata", {})
-            name = meta.get("name", "Unknown")
-            rel = meta.get("relationship", "")
-            phone = meta.get("phone", "")
-            email_addr = meta.get("email", "")
-
-            line = f"• {name}"
+        lines = [f"All contacts ({len(self._contacts)}):"]
+        for contact in self._contacts.values():
+            line = f"• {contact.get('name', 'Unknown')}"
+            rel = contact.get("relationship", "")
             if rel:
                 line += f" ({rel})"
-            if phone:
-                line += f" | Phone: {phone}"
-            if email_addr:
-                line += f" | Email: {email_addr}"
+            if contact.get("phone"):
+                line += f" | Phone: {contact['phone']}"
+            if contact.get("email"):
+                line += f" | Email: {contact['email']}"
             lines.append(line)
 
         return ToolResult(success=True, output="\n".join(lines))
@@ -211,12 +255,21 @@ class ContactsTool(BaseTool):
         if not name:
             return ToolResult(success=False, error="Name is required to delete a contact")
 
-        contact_id = f"contact_{name.lower().replace(' ', '_')}"
+        key = name.lower()
+        if key not in self._contacts:
+            return ToolResult(success=False, error=f"Contact '{name}' not found")
 
-        try:
-            self.brain.contacts.collection.delete(ids=[contact_id])
-            logger.info(f"🗑️ Contact deleted: {name}")
-            return ToolResult(success=True, output=f"Contact '{name}' deleted.")
-        except Exception as e:
-            logger.error(f"Failed to delete contact: {e}")
-            return ToolResult(success=False, error=f"Could not delete '{name}': {str(e)}")
+        # Remove from JSON
+        del self._contacts[key]
+        self._save_contacts()
+
+        # Also remove from ChromaDB (non-critical)
+        if self.brain:
+            try:
+                contact_id = f"contact_{key.replace(' ', '_')}"
+                self.brain.contacts.collection.delete(ids=[contact_id])
+            except Exception as e:
+                logger.debug(f"ChromaDB contact delete failed (non-critical): {e}")
+
+        logger.info(f"🗑️ Contact deleted: {name}")
+        return ToolResult(success=True, output=f"Contact '{name}' deleted.")
