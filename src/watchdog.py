@@ -13,15 +13,17 @@ import time
 from pathlib import Path
 from datetime import datetime
 
-# Configure logging for the watchdog itself
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - [WATCHDOG] - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("data/logs/watchdog.log")
-    ]
-)
+def setup_logging():
+    # Configure logging for the watchdog itself
+    Path("data/logs").mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - [WATCHDOG] - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler("data/logs/watchdog.log")
+        ]
+    )
 logger = logging.getLogger("watchdog")
 
 # Constants
@@ -171,8 +173,18 @@ class ServiceWatchdog:
             traceback.print_exc()
 
 if __name__ == "__main__":
-    watchdog = ServiceWatchdog()
     try:
+        # Ensure log dir exists and setup logging
+        setup_logging()
+        
+        watchdog = ServiceWatchdog()
+        logging.info("Watchdog initialized successfully")
         asyncio.run(watchdog.start())
     except KeyboardInterrupt:
         logger.info("Watchdog stopped by user")
+    except Exception as e:
+        # Critical failure in watchdog itself
+        sys.stderr.write(f"CRITICAL WATCHDOG FAILURE: {e}\n")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
