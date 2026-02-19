@@ -503,6 +503,38 @@ class ConversationManager:
             self._last_bot_response = response  # keep full response for next intent parse
             return response
 
+    def _get_tool_context_for_intent(self) -> Dict[str, Any]:
+        """Dynamically extract tool context to avoid hardcoding intents.
+        
+        Returns:
+            Dict with tool names, descriptions, and derived keywords.
+        """
+        tool_names = []
+        tool_descriptions = []
+        action_keywords = set()
+
+        if hasattr(self.agent, 'tools'):
+            try:
+                definitions = self.agent.tools.get_tool_definitions()
+                for tool in definitions:
+                    name = tool.get('name', '')
+                    desc = tool.get('description', '')
+                    tool_names.append(name)
+                    tool_descriptions.append(f"- {name}: {desc}")
+                    
+                    # Add tool name parts to keywords
+                    for part in name.split('_'):
+                        if len(part) > 2:
+                            action_keywords.add(part)
+            except Exception as e:
+                logger.debug(f"Error getting tool definitions: {e}")
+
+        return {
+            "names": tool_names,
+            "descriptions": "\n".join(tool_descriptions),
+            "keywords": list(action_keywords)
+        }
+
     async def _execute_with_fallback_model(
         self,
         message: str,

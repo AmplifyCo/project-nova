@@ -47,7 +47,10 @@
       "list unread emails",
       "show me my emails",
       "read my latest email",
-      "any urgent emails"
+      "any urgent emails",
+      "any unread emails",
+      "any unread emails?",
+      "any emails"
     ],
     "tools": [
       "email_list"
