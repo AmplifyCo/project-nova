@@ -5,6 +5,7 @@
 
 # Core Agent Engine
 anthropic>=0.40.0
+litellm>=1.57.0
 python-dotenv>=1.0.0
 aiofiles>=23.2.1
 

@@ -62,6 +62,12 @@ class ModelRouter:
             ModelTier.LOCAL: "local"  # Placeholder
         }
 
+        # Gemini config (optional second provider via LiteLLM)
+        self.gemini_model = getattr(config, "gemini_model", "gemini/gemini-2.0-flash")
+        self.gemini_enabled = getattr(config, "gemini_enabled", False)
+
+        if self.gemini_enabled:
+            logger.info(f"✨ Gemini Flash enabled for intent/simple tasks ({self.gemini_model})")
         logger.info(f"Initialized ModelRouter - Default: {config.subagent_model} (Sonnet)")
 
     def select_model_for_task(
@@ -225,6 +231,34 @@ class ModelRouter:
             Model name for architect
         """
         return self.config.default_model
+
+    def get_intent_provider(self) -> tuple:
+        """Return (provider, model) for intent parsing.
+
+        Gemini Flash is preferred — it's faster, cheaper, and has 1M token context.
+        Falls back to Claude Haiku if Gemini not configured.
+
+        Returns:
+            Tuple of ("gemini"|"claude", model_name)
+        """
+        if self.gemini_enabled:
+            return "gemini", self.gemini_model
+        return "claude", self.config.intent_model
+
+    def get_fallback_provider(self) -> tuple:
+        """Return (provider, model) for when Claude hits rate limits.
+
+        Gemini Flash is a much better fallback than local SmolLM2 — it's
+        a real LLM with full reasoning capability.
+
+        Returns:
+            Tuple of ("gemini"|"local"|None, model_name|None)
+        """
+        if self.gemini_enabled:
+            return "gemini", self.gemini_model
+        if self.config.local_model_enabled:
+            return "local", self.config.local_model_name
+        return None, None
 
     def get_model_info(self, model: str) -> Dict[str, Any]:
         """Get information about a model.

@@ -13,7 +13,8 @@ agent:
     default: "claude-opus-4-6"      # Architect - complex planning & orchestration
     subagent: "claude-sonnet-4-5"   # Workers - building & implementation
     chat: "claude-haiku-4-5"        # Chat - conversation (fast, efficient)
-    intent: "claude-haiku-4-5"      # Intent parsing - lightweight NLP
+    intent: "claude-haiku-4-5"      # Intent parsing - lightweight NLP (fallback if no Gemini)
+    gemini_flash: "gemini/gemini-2.0-flash"  # Intent + simple chat (when GEMINI_API_KEY set)
 
   safety:
     max_file_size_mb: 10

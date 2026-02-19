@@ -30,6 +30,8 @@ def load_config(env_file: str = ".env", config_file: str = "config/agent.yaml") 
     models_config = yaml_config.get("agent", {}).get("models", {})
     local_model_config = yaml_config.get("local_model", {})
 
+    gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+
     config = AgentConfig(
         # API - Multi-tier model configuration
         api_key=os.getenv("ANTHROPIC_API_KEY", ""),
@@ -37,6 +39,10 @@ def load_config(env_file: str = ".env", config_file: str = "config/agent.yaml") 
         subagent_model=os.getenv("SUBAGENT_MODEL", models_config.get("subagent", "claude-sonnet-4-5")),
         chat_model=os.getenv("CHAT_MODEL", models_config.get("chat", "claude-haiku-4-5")),
         intent_model=os.getenv("INTENT_MODEL", models_config.get("intent", "claude-haiku-4-5")),
+
+        # Gemini (optional — intent + simple chat via LiteLLM)
+        gemini_model=os.getenv("GEMINI_MODEL", yaml_config.get("agent", {}).get("models", {}).get("gemini_flash", "gemini/gemini-2.0-flash")),
+        gemini_enabled=bool(gemini_api_key),
 
         # Local Models (optional)
         local_model_enabled=os.getenv("LOCAL_MODEL_ENABLED", str(local_model_config.get("enabled", False))).lower() == "true",

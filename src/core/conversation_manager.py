@@ -63,7 +63,8 @@ class ConversationManager:
         agent,
         anthropic_client,
         model_router,
-        brain=None
+        brain=None,
+        gemini_client=None
     ):
         """Initialize conversation manager.
 
@@ -72,9 +73,11 @@ class ConversationManager:
             anthropic_client: Anthropic API client
             model_router: ModelRouter for intelligent model selection
             brain: Brain instance (optional, will auto-select if not provided)
+            gemini_client: Optional GeminiClient for intent parsing + simple chat
         """
         self.agent = agent
         self.anthropic_client = anthropic_client
+        self.gemini_client = gemini_client  # None = Gemini disabled, Claude handles everything
         self.router = model_router
 
         # TWO BRAINS:
@@ -489,7 +492,10 @@ class ConversationManager:
         message: str,
         error: Exception
     ) -> str:
-        """Execute with local fallback model using Brain for context.
+        """Execute with fallback model (Gemini Flash → local SmolLM2) when Claude fails.
+
+        Gemini Flash is tried first — it's a real LLM with full reasoning.
+        Falls back to local SmolLM2 only if Gemini is also unavailable.
 
         Args:
             message: User message
@@ -498,6 +504,32 @@ class ConversationManager:
         Returns:
             Response string with fallback warning
         """
+        # TIER 1: Gemini Flash (preferred fallback — full LLM, no tools in degraded mode)
+        if self.gemini_client and self.gemini_client.enabled:
+            try:
+                logger.warning(f"Claude unavailable, falling back to Gemini Flash: {error}")
+                self._last_model_used = "gemini-flash-fallback"
+
+                # Build a simple system prompt (Brain principles, no tool context)
+                system = await self._get_chat_system_prompt(message) if hasattr(self, '_get_chat_system_prompt') else None
+                if not system and self._cached_chat_system_prompt:
+                    system = self._cached_chat_system_prompt
+
+                response = await self.gemini_client.create_message(
+                    model=self.router.gemini_model,
+                    messages=[{"role": "user", "content": message}],
+                    system=system,
+                    max_tokens=500,
+                )
+                text = response.content[0].text
+                error_type = "Rate limit" if "429" in str(error) else "API issue"
+                warning = f"⚠️ *{error_type}* — using Gemini Flash (no tools in this mode)\n\n---\n"
+                return warning + text
+            except Exception as gemini_error:
+                logger.error(f"Gemini fallback also failed: {gemini_error}")
+                # Fall through to local model
+
+        # TIER 2: Local SmolLM2 (last resort)
         if not self.agent.config.local_model_enabled:
             raise error
 
@@ -855,7 +887,14 @@ User says "good morning" → none"""
             Intent dict with action, confidence, inferred_task, and optionally clarify_question
         """
         try:
-            intent_model = getattr(self.agent.config, 'intent_model', 'claude-haiku-4-5')
+            # Select provider: Gemini Flash if available (faster, cheaper, 1M ctx),
+            # else Claude Haiku (existing behaviour)
+            intent_provider, intent_model = self.router.get_intent_provider()
+            intent_client = (
+                self.gemini_client
+                if intent_provider == "gemini" and self.gemini_client
+                else self.anthropic_client
+            )
 
             # Build tool awareness for smarter routing
             tool_data = self._get_tool_context_for_intent()
@@ -897,7 +936,7 @@ Examples:
 "What's the weather?" → question|high|none
 "Do the thing" (no context) → clarify|low|What would you like me to do?"""
 
-            response = await self.anthropic_client.create_message(
+            response = await intent_client.create_message(
                 model=intent_model,
                 max_tokens=120,
                 system=intent_prompt,
