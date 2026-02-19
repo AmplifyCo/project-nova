@@ -28,17 +28,21 @@ from src.core.scheduler import ReminderScheduler
 from src.core.self_healing.monitor import SelfHealingMonitor
 from src.core.memory_consolidator import MemoryConsolidator
 
-# Setup logging
+# Setup logging — file handler is best-effort (don't crash if permission denied)
 LOG_DIR = Path("data/logs")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+_log_handlers = [logging.StreamHandler()]
+try:
+    _log_handlers.append(logging.FileHandler(LOG_DIR / "agent.log"))
+except PermissionError:
+    print(f"WARNING: Cannot write to {LOG_DIR / 'agent.log'} (permission denied). Logging to stdout only.")
+    print(f"Fix with: sudo chown -R $(whoami) {LOG_DIR}")
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(LOG_DIR / "agent.log")
-    ]
+    handlers=_log_handlers
 )
 
 logger = logging.getLogger(__name__)
