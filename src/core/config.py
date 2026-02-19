@@ -74,7 +74,14 @@ def load_config(env_file: str = ".env", config_file: str = "config/agent.yaml") 
 
         # Monitoring
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN"),
+
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID"),
+        
+        # Twilio (WhatsApp)
+        twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
+        twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN"),
+        twilio_from_number=os.getenv("TWILIO_FROM_NUMBER"),
+
         dashboard_enabled=yaml_config.get("monitoring", {}).get("dashboard", {}).get("enabled", True),
         dashboard_host=os.getenv("DASHBOARD_HOST", yaml_config.get("monitoring", {}).get("dashboard", {}).get("host", "0.0.0.0")),
         dashboard_port=int(os.getenv("DASHBOARD_PORT", yaml_config.get("monitoring", {}).get("dashboard", {}).get("port", 18789))),

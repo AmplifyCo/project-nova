@@ -83,6 +83,15 @@ class Dashboard:
         self.telegram_chat = telegram_chat
         logger.info("Telegram chat handler registered with dashboard")
 
+    def set_whatsapp_chat(self, whatsapp_chat):
+        """Set WhatsApp chat handler for webhook endpoint.
+
+        Args:
+            whatsapp_chat: WhatsAppChannel instance
+        """
+        self.whatsapp_chat = whatsapp_chat
+        logger.info("WhatsApp chat handler registered with dashboard")
+
     async def start(self):
         """Start dashboard server."""
         if not self.enabled:
@@ -132,6 +141,26 @@ class Dashboard:
                 logger.error(f"Error in Telegram webhook: {e}", exc_info=True)
                 return {"ok": False, "error": str(e)}
 
+        @app.post("/whatsapp/webhook")
+        async def whatsapp_webhook(request: Request):
+            """Handle WhatsApp webhook."""
+            if not hasattr(self, 'whatsapp_chat') or not self.whatsapp_chat:
+                logger.warning("WhatsApp webhook called but chat handler not set")
+                return {"status": "error", "error": "Chat handler not configured"}
+
+            try:
+                # Get form data (Twilio sends form-encoded)
+                form_data = await request.form()
+                logger.debug(f"Received WhatsApp webhook: {form_data}")
+
+                # Handle with WhatsAppChannel
+                result = await self.whatsapp_chat.handle_webhook(dict(form_data))
+                return result
+
+            except Exception as e:
+                logger.error(f"Error in WhatsApp webhook: {e}", exc_info=True)
+                return {"status": "error", "error": str(e)}
+
         # Run server
         config = self.uvicorn.Config(
             app,
@@ -143,6 +172,7 @@ class Dashboard:
 
         logger.info(f"Starting dashboard server on http://{self.host}:{self.port}")
         logger.info(f"Telegram webhook endpoint: http://{self.host}:{self.port}/telegram/webhook")
+        logger.info(f"WhatsApp webhook endpoint: http://{self.host}:{self.port}/whatsapp/webhook")
         await server.serve()
 
     def _get_dashboard_html(self) -> str:

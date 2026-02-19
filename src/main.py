@@ -21,6 +21,7 @@ from src.core.conversation_manager import ConversationManager
 from src.integrations.anthropic_client import AnthropicClient
 from src.integrations.model_router import ModelRouter
 from src.channels.telegram_channel import TelegramChannel
+from src.channels.whatsapp_channel import WhatsAppChannel
 from src.utils.telegram_notifier import TelegramNotifier, TelegramCommandHandler
 from src.utils.dashboard import Dashboard
 from src.utils.auto_updater import AutoUpdater
@@ -163,6 +164,17 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         agent.digital_brain = digital_brain   # Conversation memories, preferences, contacts
         agent.core_brain = core_brain         # Intelligence principles, build knowledge, patterns
 
+        # Register WhatsAppTool (outbound)
+        if config.twilio_account_sid and config.twilio_auth_token:
+            from src.core.tools.whatsapp import WhatsAppTool
+            whatsapp_tool = WhatsAppTool(
+                account_sid=config.twilio_account_sid,
+                auth_token=config.twilio_auth_token,
+                from_number=config.twilio_from_number
+            )
+            agent.tools.register_tool(whatsapp_tool)
+            logger.info("📱 WhatsAppTool registered")
+
         # Initialize sub-agent spawner
         api_client = AnthropicClient(config.api_key)
         agent_factory = AgentFactory(api_client, config)
@@ -283,11 +295,22 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 webhook_url=webhook_url
             )
 
+            # Initialize WhatsAppChannel (inbound)
+            whatsapp_chat = WhatsAppChannel(
+                account_sid=config.twilio_account_sid,
+                auth_token=config.twilio_auth_token,
+                from_number=config.twilio_from_number,
+                conversation_manager=conversation_manager
+            )
+
             # Register chat handler with dashboard
             if dashboard.enabled:
                 dashboard.set_telegram_chat(telegram_chat)
+                dashboard.set_whatsapp_chat(whatsapp_chat)
 
             logger.info("💬 Telegram chat interface initialized (channel-agnostic architecture)")
+            if whatsapp_chat.enabled:
+                logger.info("💬 WhatsApp chat interface initialized")
 
         # Start dashboard server (non-blocking)
         dashboard_task = None

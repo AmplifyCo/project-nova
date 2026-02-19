@@ -76,6 +76,12 @@ class AgentConfig:
     # Monitoring
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
+    
+    # Twilio (WhatsApp)
+    twilio_account_sid: Optional[str] = None
+    twilio_auth_token: Optional[str] = None
+    twilio_from_number: Optional[str] = None
+
     dashboard_enabled: bool = True
     dashboard_host: str = "0.0.0.0"
     dashboard_port: int = 18789
