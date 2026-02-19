@@ -57,7 +57,8 @@ class AutonomousAgent:
         self,
         task: str,
         max_iterations: Optional[int] = None,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        pii_map: Optional[Dict[str, str]] = None
     ) -> str:
         """Execute task autonomously until completion.
 
@@ -142,7 +143,7 @@ class AutonomousAgent:
                     })
 
                     # Execute all tool calls
-                    tool_results = await self._execute_tool_calls(response.content)
+                    tool_results = await self._execute_tool_calls(response.content, pii_map)
 
                     # Add tool results as user message
                     messages.append({
@@ -197,7 +198,11 @@ class AutonomousAgent:
         self.state_machine.reset()
         return final_result or "Task completed"
 
-    async def _execute_tool_calls(self, content: List[Any]) -> List[Dict[str, Any]]:
+    async def _execute_tool_calls(
+        self,
+        content: List[Any],
+        pii_map: Optional[Dict[str, str]] = None
+    ) -> List[Dict[str, Any]]:
         """Execute tool calls from Claude's response (parallel when safe).
 
         Args:
@@ -217,6 +222,26 @@ class AutonomousAgent:
             tool_name = block.name
             tool_input = block.input
             tool_use_id = block.id
+
+            # De-tokenize PII in tool inputs if map provided
+            if pii_map:
+                # Recursive de-tokenization for nested dicts/lists
+                def detokenize_value(val):
+                    if isinstance(val, str):
+                        for placeholder, original in pii_map.items():
+                            val = val.replace(placeholder, original)
+                        return val
+                    elif isinstance(val, dict):
+                        return {k: detokenize_value(v) for k, v in val.items()}
+                    elif isinstance(val, list):
+                        return [detokenize_value(v) for v in val]
+                    return val
+
+                try:
+                    tool_input = detokenize_value(tool_input)
+                    logger.debug(f"De-tokenized tool input for {tool_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to de-tokenize tool input: {e}")
 
             logger.info(f"Executing tool: {tool_name}")
             logger.debug(f"Tool input: {tool_input}")

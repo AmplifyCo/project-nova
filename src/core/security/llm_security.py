@@ -416,3 +416,74 @@ Keep your response to just one word: VALID or INVALID"""
         }
 
         return responses.get(threat_type, "⚠️ This request cannot be processed due to security restrictions.")
+
+    # ========================================================================
+    # Layer 9: PII Redaction (Input Sanitization for LLM)
+    # ========================================================================
+
+    def redact_pii(self, text: str) -> Tuple[str, Dict[str, str]]:
+        """Redact PII from text before sending to LLM.
+        
+        Args:
+            text: Input text containing potential PII
+            
+        Returns:
+            Tuple of (redacted_text, pii_map)
+            - redacted_text: Text with PII replaced by placeholders (e.g. [EMAIL_1])
+            - pii_map: Dictionary mapping placeholders back to original values
+        """
+        redacted = text
+        pii_map = {}
+        
+        # Regex patterns for PII
+        patterns = {
+            'EMAIL': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+            'PHONE': r'\b(?:(?:\+?\d{1,3}[-. ]?)?\(?\d{3}\)?[-. ]?)?\d{3}[-. ]\d{4}\b',
+            'IP': r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b',
+            'SSN': r'\b\d{3}-\d{2}-\d{4}\b',
+            'CREDIT_CARD': r'\b(?:\d{4}[-\s]?){3}\d{4}\b',
+            # Add more as needed
+        }
+        
+        for pii_type, pattern in patterns.items():
+            matches = list(re.finditer(pattern, redacted))
+            # Process in reverse to avoid index shifts if we were modifying in place,
+            # but here we use replace which is safe for distinct strings.
+            # Ideally we should use a single pass tokenization, but iterative regex is fine for short messages.
+            
+            for i, match in enumerate(matches, 1):
+                original_value = match.group(0)
+                
+                # Check if already in map (reuse placeholder)
+                existing_placeholder = None
+                for p, v in pii_map.items():
+                    if v == original_value:
+                        existing_placeholder = p
+                        break
+                
+                if existing_placeholder:
+                    placeholder = existing_placeholder
+                else:
+                    placeholder = f"[{pii_type}_{i}]"
+                    pii_map[placeholder] = original_value
+                
+                # Replace *only this instance*? No, replace all occurrences of this specific value
+                # robustly.
+                redacted = redacted.replace(original_value, placeholder)
+                
+        return redacted, pii_map
+
+    def detokenize_pii(self, text: str, pii_map: Dict[str, str]) -> str:
+        """Restore PII in text using the map (for tool execution).
+        
+        Args:
+            text: Text containing placeholders
+            pii_map: Map of placeholders to original values
+            
+        Returns:
+            Text with original PII restored
+        """
+        detokenized = text
+        for placeholder, original_value in pii_map.items():
+            detokenized = detokenized.replace(placeholder, original_value)
+        return detokenized

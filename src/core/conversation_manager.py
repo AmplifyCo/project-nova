@@ -363,38 +363,57 @@ class ConversationManager:
             )
 
         try:
-            # PHASE 1: Semantic Routing (Fast Path)
-            # Check for exact/close matches in golden examples (bypass LLM)
-            intent = None
-            if self.semantic_router:
-                intent = await self.semantic_router.route(message)
-                if intent:
-                    logger.info(f"🚀 Semantic Router match: {intent['action']} ({intent['confidence']:.2f})")
-                    # Add missing fields needed for execution
-                    intent["inferred_task"] = message  # Use message as task
-                    intent["parameters"] = {}
-                    # Add history so the agent has context even on fast path
-                    intent["_conversation_history"] = await self._get_recent_history_for_intent()
+            # Helper to execute
+            async def execute_task(msg: str):
+                # Layer 9: PII Redaction
+                # Use original message for local brain/Audit, but redacted for LLM/Intent
+                redacted_msg, pii_map = self.security_guard.redact_pii(msg)
+                
+                if len(pii_map) > 0:
+                    logger.info(f"🚫 Redacted {len(pii_map)} PII items from message")
+                    logger.debug(f"PII Map: {pii_map.keys()}")
 
-            # PHASE 2: LLM Intent Parsing (Slow Path)
-            if not intent:
-                intent = await self._parse_intent_with_fallback(message)
+                # PHASE 1: Semantic Routing (Fast Path) - use redacted message
+                intent = None
+                if self.semantic_router:
+                    # Note: If PII was critical for routing (e.g. "email bob@gmail.com"), 
+                    # the router might still work if it matches "email [EMAIL_1]" or general "email" intent.
+                    intent = await self.semantic_router.route(redacted_msg)
+                    if intent:
+                        logger.info(f"🚀 Semantic Router match: {intent['action']} ({intent['confidence']:.2f})")
+                        # Add missing fields needed for execution
+                        intent["inferred_task"] = redacted_msg  # Use redacted message as task
+                        intent["parameters"] = {}
+                        # Add history so the agent has context even on fast path
+                        intent["_conversation_history"] = await self._get_recent_history_for_intent()
+                        
+                        # Store PII map in intent for execution phase
+                        intent["_pii_map"] = pii_map
 
-            # Use router to determine best model
-            action = intent.get("action", "unknown")
-            confidence = intent.get("confidence", 0.0)
+                # PHASE 2: LLM Intent Parsing (Slow Path)
+                if not intent:
+                    intent = await self._parse_intent_with_fallback(redacted_msg)
+                    intent["_pii_map"] = pii_map
 
-            selected_model = self.router.select_model_for_task(
-                task=message,
-                intent=action,
-                confidence=confidence
-            )
+                # Use router to determine best model
+                action = intent.get("action", "unknown")
+                confidence = intent.get("confidence", 0.0)
 
-            logger.info(f"Intent: {action} (confidence: {confidence:.2f})")
-            logger.info(f"Selected model: {selected_model}")
+                selected_model = self.router.select_model_for_task(
+                    task=redacted_msg, # Use redacted message for model selection
+                    intent=action,
+                    confidence=confidence
+                )
 
-            # Execute with primary model
-            return await self._execute_with_primary_model(intent, message)
+                logger.info(f"Intent: {action} (confidence: {confidence:.2f})")
+                logger.info(f"Selected model: {selected_model}")
+
+                # Execute based on intent
+                return await self._execute_with_primary_model(intent, redacted_msg)
+
+            # Actual execution
+            response = await execute_task(message)
+            return response
 
         except Exception as e:
             # Check if we should fall back to local model
@@ -410,15 +429,11 @@ class ConversationManager:
         intent: Dict[str, Any],
         message: str
     ) -> str:
-        """Execute with primary Claude models.
-
-        Args:
-            intent: Parsed intent
-            message: User message
-
-        Returns:
-            Response string
-        """
+        """Execute task using primary model (Claude)."""
+        logger.info(f"Executing with primary model. Intent: {intent.get('action')}")
+        
+        # Extract PII map if present
+        pii_map = intent.get("_pii_map", {})
         action = intent.get("action", "unknown")
         inferred_task = intent.get("inferred_task")
 
@@ -457,18 +472,37 @@ class ConversationManager:
         elif action == "action":
             # Explicit or inferred action — needs tools
             logger.info(f"Action - using agent with tools (inferred: {inferred_task or 'direct'})")
-            self._last_model_used = "claude-sonnet-4-5"
-            return await self.agent.run(
-                task=agent_task,
-                max_iterations=30,
-                system_prompt=await self._build_system_prompt(message)
+            
+            # Use inferred task if available (it might be more specific), otherwise original message
+            task_to_run = inferred_task if inferred_task else message
+            
+            # Build context-aware system prompt
+            system_prompt = await self._build_system_prompt(intent)
+            
+            response = await self.agent.run(
+                task=task_to_run,
+                system_prompt=system_prompt,
+                pii_map=pii_map
             )
+            return response
 
         elif action == "question":
             # Question — use chat with Brain context
             logger.info("Question - using chat with Brain context")
             self._last_model_used = "claude-sonnet-4-5"
-            return await self._chat(message)
+            
+            # Simple conversation
+            system_prompt = await self._build_system_prompt(intent)
+            
+            # Use agent just for the chat generation (no tools)
+            # We pass pii_map even for chat, though usually less critical unless it echoes back
+            response = await self.agent.run(
+                task=message,
+                max_iterations=1,
+                system_prompt=system_prompt,
+                pii_map=pii_map
+            )
+            return response
 
         elif action == "clarify":
             # LLM is unsure — ask the user for clarification
