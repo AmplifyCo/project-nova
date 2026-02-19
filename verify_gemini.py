@@ -9,7 +9,7 @@ sys.path.insert(0, os.getcwd())
 try:
     import litellm
     from litellm import acompletion
-    litellm.set_verbose = True  # Force debug logging
+    # litellm.set_verbose = True  # specific log level set by user env var `LITELLM_LOG`
 except ImportError:
     print("Please install litellm first: pip install litellm")
     sys.exit(1)
@@ -42,10 +42,18 @@ async def check_version():
                 "content": "What is your exact model version? Are you Gemini 1.5, 2.0, or 3.1? What is your knowledge cutoff date?"
             }]
         )
+        print(f"\nResponse Type: {type(response)}")
         print("\n--- Model Response ---")
-        print(response.choices[0].message.content)
+        if hasattr(response, 'choices'):
+            print(response.choices[0].message.content)
+        else:
+            print(f"Raw Response: {response}")
+            
         print("\n--- Metadata ---")
-        print(f"Model ID returned: {response.model}")
+        if hasattr(response, 'model'):
+            print(f"Model ID returned: {response.model}")
+        else:
+            print("No model ID in response.")
         
     except Exception as e:
         print(f"\nError: {e}")
