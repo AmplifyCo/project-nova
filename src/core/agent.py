@@ -214,7 +214,7 @@ class AutonomousAgent:
     MODEL_GEMINI_FLASH = "gemini/gemini-2.0-flash"
     MODEL_CLAUDE_SONNET = "anthropic/claude-3-5-sonnet-20241022"
     MODEL_CLAUDE_HAIKU = "anthropic/claude-3-haiku-20240307"
-    MODEL_GEMINI_PRO = "gemini/gemini-1.5-pro"
+    MODEL_GEMINI_PRO = "gemini/gemini-pro-latest"
 
     async def _call_llm(
         self,
