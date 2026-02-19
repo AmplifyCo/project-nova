@@ -200,6 +200,9 @@ class AutonomousAgent:
                 else:
                     raise
 
+            # Space out requests to avoid rate limits
+            await asyncio.sleep(1.0)
+
         # Handle max iterations reached — try Gemini summary
         if iteration >= max_iterations and not final_result:
             logger.warning(f"Reached max iterations ({max_iterations})")
@@ -214,7 +217,7 @@ class AutonomousAgent:
     MODEL_GEMINI_FLASH = "gemini/gemini-2.0-flash"
     MODEL_CLAUDE_SONNET = "anthropic/claude-3-5-sonnet-20241022"
     MODEL_CLAUDE_HAIKU = "anthropic/claude-3-haiku-20240307"
-    MODEL_GEMINI_PRO = "gemini/gemini-pro-latest"
+    MODEL_GEMINI_PRO = "gemini/gemini-2.5-pro"
 
     async def _call_llm(
         self,
