@@ -420,6 +420,7 @@ class ConversationManager:
             Response string
         """
         action = intent.get("action", "unknown")
+        inferred_task = intent.get("inferred_task")
 
         # Build enriched execution plan:
         # Intent (what to do) + Tool hints (which tools) + Memory (context) → agent task
