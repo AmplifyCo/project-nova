@@ -87,6 +87,11 @@ if git pull origin main 2>&1 | tee -a "$LOG_FILE"; then
     fi
 
     # Install dependencies
+    # On Linux, install CPU-only PyTorch first to avoid 800MB+ CUDA bloat
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        log "⚡ Installing CPU-only PyTorch (Linux)..."
+        "$SCRIPT_DIR/venv/bin/pip" install torch --index-url https://download.pytorch.org/whl/cpu 2>&1 | tee -a "$LOG_FILE"
+    fi
     "$SCRIPT_DIR/venv/bin/pip" install -r requirements.txt 2>&1 | tee -a "$LOG_FILE"
     
     # Ensure rights (if run as root/sudo but user owns dir)

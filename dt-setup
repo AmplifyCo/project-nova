@@ -338,6 +338,12 @@ check_and_install_dependencies() {
     echo "Running: pip install -r requirements.txt"
     echo ""
 
+    # On Linux, install CPU-only PyTorch first to avoid 800MB+ CUDA bloat
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        echo "⚡ Installing CPU-only PyTorch (Linux)..."
+        python3 -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+    fi
+
     if python3 -m pip install -r "$REQUIREMENTS_TXT"; then
         echo ""
         echo "✅ Dependencies installed/verified successfully!"
