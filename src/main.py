@@ -369,7 +369,8 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             telegram_notifier=telegram,
             check_interval=3600,  # 1 hour
             log_file=str(LOG_DIR / "agent.log"),
-            auto_fix_enabled=True
+            auto_fix_enabled=True,
+            llm_client=gemini_client  # Enable AI-powered fixes
         )
         self_healing_task = asyncio.create_task(self_healing.start())
 

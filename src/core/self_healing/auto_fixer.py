@@ -1,9 +1,11 @@
 """Auto-fix system for attempting to resolve detected errors."""
 
-import logging
-import subprocess
 import asyncio
+from datetime import datetime
 from typing import Optional, Dict, Any, List
+from pathlib import Path
+import re
+import subprocess
 from pathlib import Path
 
 from .error_detector import DetectedError, ErrorType, ErrorSeverity
@@ -35,16 +37,18 @@ class FixResult:
 class AutoFixer:
     """Automatically attempts to fix detected errors."""
 
-    def __init__(self, telegram_notifier=None):
+    def __init__(self, telegram_notifier=None, llm_client=None):
         """Initialize auto-fixer.
 
         Args:
             telegram_notifier: Optional Telegram chat instance for notifications
+            llm_client: Unified LiteLLM client for AI analysis
         """
         self.telegram = telegram_notifier
+        self.llm_client = llm_client
         self.fix_history: List[FixResult] = []
 
-        logger.info("AutoFixer initialized")
+        logger.info("AutoFixer initialized with LLM support")
 
     async def attempt_fix(self, error: DetectedError) -> FixResult:
         """Attempt to automatically fix a detected error.
@@ -72,13 +76,18 @@ class AutoFixer:
 
         fix_func = fix_strategies.get(error.error_type)
         if not fix_func:
-            logger.warning(f"No fix strategy for {error.error_type.value}")
-            return FixResult(
-                success=False,
-                error_type=error.error_type,
-                action_taken="None - no fix strategy available",
-                details="This error type is not auto-fixable"
-            )
+            # Fallback to AI code fix if enabled and client available
+            if self.llm_client:
+                logger.info(f"No specific strategy for {error.error_type.value}, attempting AI code fix")
+                fix_func = self._fix_code_error
+            else:
+                logger.warning(f"No fix strategy for {error.error_type.value}")
+                return FixResult(
+                    success=False,
+                    error_type=error.error_type,
+                    action_taken="None - no fix strategy available",
+                    details="This error type is not auto-fixable and no LLM client available"
+                )
 
         try:
             result = await fix_func(error)
@@ -609,3 +618,181 @@ class AutoFixer:
                 for f in self.fix_history[-5:]  # Last 5 fixes
             ]
         }
+    async def _fix_code_error(self, error: DetectedError) -> FixResult:
+        """Fix arbitrary code errors using LLM analysis.
+
+        Args:
+            error: The detected error
+
+        Returns:
+            FixResult
+        """
+        if not self.llm_client:
+            return FixResult(success=False, error_type=error.error_type, action_taken="No LLM client")
+
+        logger.info("Attempting AI-powered code fix...")
+
+        # 1. Identify file from context
+        import re
+        file_path = None
+        line_num = None
+        if error.context:
+            match = re.search(r'File "([^"]+)", line (\d+)', error.context)
+            if match:
+                file_path = match.group(1)
+                line_num = match.group(2)
+        
+        if not file_path or not Path(file_path).exists():
+            return FixResult(
+                success=False, 
+                error_type=error.error_type, 
+                action_taken="Could not locate file",
+                details="File path missing from error context"
+            )
+
+        # 2. Read file content
+        try:
+            with open(file_path, 'r') as f:
+                code_content = f.read()
+        except Exception as e:
+            return FixResult(success=False, error_type=error.error_type, action_taken="Read failed", details=str(e))
+
+        # 3. Generate fix via LLM
+        try:
+            fix_diff = await self._generate_ai_fix(error, file_path, code_content)
+            if not fix_diff:
+                return FixResult(success=False, error_type=error.error_type, action_taken="LLM declined fix")
+        except Exception as e:
+             return FixResult(success=False, error_type=error.error_type, action_taken="Generation failed", details=str(e))
+
+        # 4. Assess Security Risk
+        risk_level, risk_reason = await self._assess_security_risk(fix_diff, file_path)
+        
+        if risk_level == "SENSITIVE":
+            # Save for review
+            output_dir = Path("data/pending_fixes")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            fix_id = f"fix_{int(datetime.now().timestamp())}.diff"
+            with open(output_dir / fix_id, 'w') as f:
+                f.write(fix_diff)
+            
+            return FixResult(
+                success=True, # It was "handled" successfully, even if not applied
+                error_type=error.error_type,
+                action_taken="⚠️ Fix saved for review (Security Risk)",
+                details=f"Classified as SENSITIVE: {risk_reason}. Review at {output_dir}/{fix_id}",
+                requires_restart=False
+            )
+
+        # 5. Apply Safe Fix
+        try:
+            # Write diff to temp file
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.diff', delete=False) as tmp:
+                tmp.write(fix_diff)
+                tmp_path = tmp.name
+            
+            # Apply patch
+            # patch -p0 < fix.diff (assuming paths are compatible, might need adjustment)
+            # Actually, unified diffs usually need -p1 or -p0 depending on how they were generated.
+            # We'll ask LLM to generate diffs processing relative to project root.
+            
+            proc = await asyncio.create_subprocess_shell(
+                f"patch -p0 < {tmp_path}",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+            
+            Path(tmp_path).unlink() # Cleanup
+
+            if proc.returncode != 0:
+                 return FixResult(
+                    success=False, 
+                    error_type=error.error_type, 
+                    action_taken="Patch application failed", 
+                    details=stderr.decode()
+                )
+
+            return FixResult(
+                success=True,
+                error_type=error.error_type,
+                action_taken="Applied AI Code Fix",
+                details="Automatically patched code bug via LLM",
+                requires_restart=True
+            )
+
+        except Exception as e:
+            return FixResult(success=False, error_type=error.error_type, action_taken="Apply failed", details=str(e))
+
+
+    async def _generate_ai_fix(self, error: DetectedError, file_path: str, code: str) -> Optional[str]:
+        """Generate a unified diff fix using Claude."""
+        system_prompt = """You are an expert Python debugger. 
+        Analyze the error and the code. 
+        Generate a UNIFIED DIFF (git diff format) to fix the bug.
+        
+        Rules:
+        1. Output ONLY the diff content. No markdown code blocks, no explanation.
+        2. Use strictly standard unified diff format (starts with --- and +++).
+        3. File paths in diff should be relative to project root (e.g. src/core/agent.py).
+        4. Fix only the specific error. Do not refactor unrelated code.
+        """
+        
+        user_message = f"""
+        Error: {error.message}
+        Type: {error.error_type.value}
+        Context: {error.context}
+        
+        File: {file_path}
+        Code Content:
+        {code}
+        """
+
+        try:
+            response = await self.llm_client.create_message(
+                model="anthropic/claude-4-6-sonnet", # Use smart model for coding
+                messages=[{"role": "user", "content": user_message}],
+                system=system_prompt,
+                max_tokens=2048
+            )
+            
+            content = response.content[0].text.strip()
+            # unique case if model outputs markdown block
+            if content.startswith("```"):
+                content = content.split("\n", 1)[1].rsplit("\n", 1)[0]
+                
+            return content
+        except Exception as e:
+            logger.error(f"LLM fix generation failed: {e}")
+            return None
+
+    async def _assess_security_risk(self, diff: str, file_path: str) -> tuple[str, str]:
+        """Assess if the fix is SAFE or SENSITIVE."""
+        # 1. Hardcoded Rules
+        if "src/core/security" in file_path:
+            return "SENSITIVE", "Modifies security module"
+        if "bash.py" in file_path and ("blocked_commands" in diff or "allowed_commands" in diff):
+            return "SENSITIVE", "Modifies bash tool security filters"
+        if any(w in diff.lower() for w in ["password", "secret", "api_key", "auth", "encrypt"]):
+            return "SENSITIVE", "Contains auth/secret keywords"
+            
+        # 2. LLM Judge (Gemini Flash for speed/cost)
+        try:
+            response = await self.llm_client.create_message(
+                model="gemini/gemini-2.0-flash",
+                messages=[{
+                    "role": "user", 
+                    "content": f"Analyze this git diff. Is it security-sensitive? Reply ONLY 'SAFE' or 'SENSITIVE'.\n\nDiff:\n{diff}"
+                }],
+                max_tokens=10
+            )
+            result = response.content[0].text.strip().upper()
+            if "SENSITIVE" in result:
+                return "SENSITIVE", "AI Flagged as sensitive"
+                
+        except Exception as e:
+            logger.warning(f"LLM security check failed: {e}")
+            return "SENSITIVE", "Security check failed (fail-safe)" # Fail safe
+            
+        return "SAFE", "Passed checks"

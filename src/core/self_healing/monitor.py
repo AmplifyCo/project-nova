@@ -19,7 +19,8 @@ class SelfHealingMonitor:
         telegram_notifier=None,
         check_interval: int = 43200,  # 12 hours
         log_file: str = "./data/logs/agent.log",
-        auto_fix_enabled: bool = True
+        auto_fix_enabled: bool = True,
+        llm_client=None
     ):
         """Initialize self-healing monitor.
 
@@ -28,13 +29,14 @@ class SelfHealingMonitor:
             check_interval: Seconds between health checks
             log_file: Path to log file to monitor
             auto_fix_enabled: Whether to attempt auto-fixes
+            llm_client: Unified LiteLLM client for AI analysis
         """
         self.telegram = telegram_notifier
         self.check_interval = check_interval
         self.auto_fix_enabled = auto_fix_enabled
 
         self.detector = ErrorDetector(log_file=log_file)
-        self.fixer = AutoFixer(telegram_notifier=telegram_notifier)
+        self.fixer = AutoFixer(telegram_notifier=telegram_notifier, llm_client=llm_client)
 
         self.is_running = False
         self.last_check = None

@@ -118,7 +118,7 @@ class ErrorDetector:
         logger.info(f"ErrorDetector initialized, monitoring: {log_file}")
 
     def scan_recent_logs(self, minutes: int = 5, not_before=None) -> List[DetectedError]:
-        """Scan recent log entries for errors.
+        """Scan recent log entries for errors, capturing stack traces.
 
         Args:
             minutes: How many minutes back to scan
@@ -133,16 +133,15 @@ class ErrorDetector:
 
         errors = []
         cutoff_time = datetime.now() - timedelta(minutes=minutes)
-        # Never report errors that pre-date our startup (avoids re-detecting pre-restart crashes)
         if not_before and not_before > cutoff_time:
             cutoff_time = not_before
 
         try:
             with open(self.log_file, 'r') as f:
-                # Read last N lines (more efficient than reading entire file)
-                lines = self._tail_file(f, 500)
+                # Read last 1000 lines to ensure we catch stack traces
+                lines = self._tail_file(f, 1000)
 
-                for line in lines:
+                for i, line in enumerate(lines):
                     # Check if line is recent enough
                     timestamp = self._extract_timestamp(line)
                     if timestamp and timestamp < cutoff_time:
@@ -151,6 +150,30 @@ class ErrorDetector:
                     # Check for error patterns
                     detected = self._detect_error_in_line(line, timestamp)
                     if detected:
+                        # Capture stack trace context (look back up to 20 lines)
+                        stack_trace = []
+                        for j in range(1, 21):
+                            if i - j < 0:
+                                break
+                            prev_line = lines[i - j]
+                            # Stop if we hit a timestamped line that isn't part of the trace
+                            # (unless it's the start of the traceback)
+                            if self._extract_timestamp(prev_line) and "Traceback" not in prev_line:
+                                break
+                            stack_trace.insert(0, prev_line)
+
+                        if stack_trace:
+                            detected.context = "".join(stack_trace) + detected.context if detected.context else "".join(stack_trace)
+                        
+                        # Extract file path from stack trace if not already found
+                        if not detected.context or "File" not in detected.context:
+                            # Try to find file path in the captured stack trace
+                            for trace_line in reversed(stack_trace):
+                                context_match = self._extract_context(trace_line)
+                                if context_match:
+                                    detected.context = f"{context_match}\n{detected.context or ''}"
+                                    break
+
                         errors.append(detected)
                         self.detected_errors.append(detected)
 
