@@ -94,6 +94,18 @@ if git pull origin main 2>&1 | tee -a "$LOG_FILE"; then
         chown -R "$SUDO_USER" "$SCRIPT_DIR/venv"
     fi
 
+    # Update systemd service if changed
+    SERVICE_FILE="digital-twin.service"
+    INSTALLED_SERVICE="/etc/systemd/system/$SERVICE_FILE"
+    if [ -f "$SERVICE_FILE" ] && [ -f "$INSTALLED_SERVICE" ]; then
+        if ! cmp -s "$SERVICE_FILE" "$INSTALLED_SERVICE"; then
+            log "🔧 Service file changed, updating systemd..."
+            sudo cp "$SERVICE_FILE" "$INSTALLED_SERVICE"
+            sudo systemctl daemon-reload
+            log "✅ Systemd service updated"
+        fi
+    fi
+
     # Refresh global dt-setup if it changed and is installed globally
     GLOBAL_DT="/usr/local/bin/dt-setup"
     if [ -f "$GLOBAL_DT" ] && git diff --name-only "$LOCAL" "$REMOTE" | grep -q "^dt-setup$"; then
