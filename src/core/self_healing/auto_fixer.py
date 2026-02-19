@@ -489,7 +489,7 @@ class AutoFixer:
         try:
             # Check if running as systemd service
             result = subprocess.run(
-                ["systemctl", "is-active", "claude-agent"],
+                ["systemctl", "is-active", "digital-twin"],
                 capture_output=True,
                 text=True
             )
@@ -499,7 +499,7 @@ class AutoFixer:
                 logger.info("Service is down, attempting to restart")
 
                 restart_result = subprocess.run(
-                    ["sudo", "systemctl", "restart", "claude-agent"],
+                    ["sudo", "systemctl", "restart", "digital-twin"],
                     capture_output=True,
                     text=True,
                     timeout=30
