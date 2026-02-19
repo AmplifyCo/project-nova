@@ -125,6 +125,9 @@ class SelfHealingMonitor:
 
                 if result.requires_restart:
                     needs_restart = True
+
+                # Purge the error log so fixed errors don't get re-detected
+                self._purge_error_log()
             else:
                 fixes_failed += 1
                 logger.warning(f"❌ Failed to fix: {error.error_type.value}")
@@ -181,6 +184,21 @@ class SelfHealingMonitor:
 Monitoring and will attempt auto-fix if possible.
 """
         await self.telegram.notify(message)
+
+    def _purge_error_log(self):
+        """Clear the error log file after a successful fix so old errors aren't re-detected."""
+        try:
+            log_path = self.detector.log_file
+            if log_path.exists():
+                with open(log_path, 'w') as f:
+                    f.write(f"# Log purged after successful auto-fix at {datetime.now().isoformat()}\n")
+                # Reset startup_time so the fresh log is scanned from now
+                self.startup_time = datetime.now()
+                self.detector.detected_errors.clear()
+                self.detector.error_history.clear()
+                logger.info("🗑️ Error log purged after successful fix")
+        except Exception as e:
+            logger.warning(f"Could not purge error log: {e}")
 
     async def get_status(self) -> dict:
         """Get monitor status.

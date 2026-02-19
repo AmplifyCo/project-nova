@@ -315,7 +315,7 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         # Start self-healing monitor background task
         self_healing = SelfHealingMonitor(
             telegram_notifier=telegram,
-            check_interval=300,  # 5 minutes
+            check_interval=3600,  # 1 hour
             log_file=str(LOG_DIR / "agent.log"),
             auto_fix_enabled=True
         )
