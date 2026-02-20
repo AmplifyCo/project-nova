@@ -153,10 +153,19 @@ class ContactsTool(BaseTool):
         if not name:
             return ToolResult(success=False, error="Name is required to save a contact")
 
-        # Clean phone number
+        # Clean and format phone number to E.164 standard
         clean_phone = None
         if phone:
-            clean_phone = phone.replace("+", "").replace("-", "").replace(" ", "").replace("(", "").replace(")", "")
+            import re
+            # Keep only digits and the + sign
+            clean_phone = re.sub(r'[^\d+]', '', phone)
+            
+            # If it's a 10-digit number without a country code, assume US/Canada and add +1
+            if len(clean_phone) == 10 and not clean_phone.startswith("+"):
+                clean_phone = f"+1{clean_phone}"
+            # Ensure it starts with + for proper E.164 format
+            elif not clean_phone.startswith("+"):
+                clean_phone = f"+{clean_phone}"
 
         # Build contact record
         key = name.lower()
