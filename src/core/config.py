@@ -74,8 +74,12 @@ def load_config(env_file: str = ".env", config_file: str = "config/agent.yaml") 
 
         # Monitoring
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN"),
-
         telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID"),
+        
+        # Twilio Voice
+        twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
+        twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN"),
+        twilio_phone_number=os.getenv("TWILIO_PHONE_NUMBER"),
         
         # WhatsApp (Meta Cloud API)
         whatsapp_api_token=os.getenv("WHATSAPP_API_TOKEN"),

@@ -90,6 +90,14 @@ class Dashboard:
             whatsapp_chat: WhatsAppChannel instance
         """
         self.whatsapp_chat = whatsapp_chat
+
+    def set_twilio_voice_chat(self, twilio_voice_chat):
+        """Set Twilio Voice chat handler for webhook endpoint.
+
+        Args:
+            twilio_voice_chat: TwilioVoiceChannel instance
+        """
+        self.twilio_voice_chat = twilio_voice_chat
         logger.info("WhatsApp chat handler registered with dashboard")
 
     async def start(self):
@@ -174,13 +182,34 @@ class Dashboard:
                 payload = await request.json()
                 logger.debug(f"Received WhatsApp webhook: {payload}")
 
-                # Handle with WhatsAppChannel
-                result = await self.whatsapp_chat.handle_webhook_payload(payload)
-                return result
+                if self.whatsapp_chat:
+                    result = await self.whatsapp_chat.handle_webhook_payload(payload)
+                    return Response(content=json.dumps(result), media_type="application/json")
+                return Response("OK", status_code=200)
 
             except Exception as e:
                 logger.error(f"Error in WhatsApp webhook: {e}", exc_info=True)
                 return {"status": "error", "error": str(e)}
+
+        @app.post("/twilio/voice")
+        async def twilio_voice_webhook(request: Request):
+            """Handle incoming Twilio Voice call (POST)."""
+            if not getattr(self, "twilio_voice_chat", None):
+                return Response("Online", media_type="text/xml")
+                
+            form_data = dict(await request.form())
+            twiml = await self.twilio_voice_chat.handle_incoming_call(form_data)
+            return Response(twiml, media_type="text/xml")
+
+        @app.post("/twilio/voice/gather")
+        async def twilio_voice_gather_webhook(request: Request):
+            """Handle transcribed speech from Twilio Gather (POST)."""
+            if not getattr(self, "twilio_voice_chat", None):
+                return Response("Online", media_type="text/xml")
+                
+            form_data = dict(await request.form())
+            twiml = await self.twilio_voice_chat.handle_gather(form_data)
+            return Response(twiml, media_type="text/xml")
 
         # Run server
         config = self.uvicorn.Config(
