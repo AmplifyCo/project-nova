@@ -106,12 +106,17 @@ class GeminiClient:
                     # and they cause Vertex parse crashes.
                     continue
                     
-                # If a property definition is just a string, wrap it.
+                # If a property definition is just a string or list, wrap it to prevent litellm crashes
                 if k == "properties" and isinstance(v, dict):
                     prop_dict = {}
                     for pk, pv in v.items():
                         if isinstance(pv, str):
                             prop_dict[pk] = {"type": pv}
+                        elif isinstance(pv, list):
+                            # Litellm crashes if a property definition itself is a list
+                            # It needs to be a dict e.g. {"type": "array", "items": {...}}
+                            # Often lists here are just accidental enums or bad schema formats
+                            prop_dict[pk] = {"type": "string"} # Fallback to string for safety
                         else:
                             prop_dict[pk] = self._sanitize_schema(pv)
                     sanitized[k] = prop_dict
