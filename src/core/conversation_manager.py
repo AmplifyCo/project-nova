@@ -729,131 +729,96 @@ class ConversationManager:
         message: str,
         error: Exception
     ) -> str:
-        """Execute with fallback model (Gemini Flash → local SmolLM2) when Claude fails.
+        """Execute with fallback model when primary fails.
 
-        Gemini Flash is tried first — it's a real LLM with full reasoning.
-        Falls back to local SmolLM2 only if Gemini is also unavailable.
+        Uses cross-provider fallback via LiteLLM:
+        - If Gemini failed → try Claude Sonnet
+        - If Claude failed → try Gemini Flash
+        - If both fail → return a graceful apology (no crash)
 
         Args:
             message: User message
             error: The error that triggered fallback
 
         Returns:
-            Response string with fallback warning
+            Response string (with fallback suffix if degraded)
         """
-        # TIER 1: Gemini Flash (preferred fallback — full LLM, no tools in degraded mode)
-        if self.gemini_client and self.gemini_client.enabled:
-            try:
-                logger.warning(f"Claude unavailable, falling back to Gemini Flash: {error}")
-                self._last_model_used = "gemini-flash-fallback"
+        error_str = str(error).lower()
+        gemini_failed = "gemini" in error_str or "resource exhausted" in error_str
+        claude_failed = "anthropic" in error_str or "claude" in error_str
 
-                # Use Agent with "flash" tier -> enables tools with Gemini
-                # We interpret the message as a task
-                logger.info("Executing with Gemini Flash (Agent mode w/ tools)")
-                
-                # Limit iterations to prevent loops if tools fail
+        # TIER 1: Cross-provider fallback via LiteLLM
+        if self.gemini_client and self.gemini_client.enabled:
+            # Pick the OTHER provider as fallback
+            if gemini_failed:
+                fallback_model = "anthropic/claude-sonnet-4-5"
+                fallback_label = "Claude Sonnet"
+            elif claude_failed:
+                fallback_model = "gemini/gemini-2.0-flash"
+                fallback_label = "Gemini Flash"
+            else:
+                # Unknown error — try Claude first (more reliable for complex tasks)
+                fallback_model = "anthropic/claude-sonnet-4-5"
+                fallback_label = "Claude Sonnet"
+
+            try:
+                logger.warning(f"Primary failed ({str(error)[:80]}), falling back to {fallback_label}")
+                self._last_model_used = f"{fallback_label.lower().replace(' ', '-')}-fallback"
+
+                # Use agent with tools — full capability in fallback
                 response_text = await self.agent.run(
                     task=message,
-                    model_tier="flash",
+                    model_tier="sonnet" if "claude" in fallback_model else "flash",
                     max_iterations=5,
-                    system_prompt=None  # Let agent build standard prompt with tools
+                    system_prompt=None
                 )
 
-                # Only add suffix if we fell back from a different model
-                if "gemini" not in self.agent.config.default_model:
-                    response_text += "\n_(using Gemini Flash)_"
-                
+                response_text += f"\n_(using {fallback_label})_"
                 return response_text
-            except Exception as gemini_error:
-                logger.error(f"Gemini fallback also failed: {gemini_error}")
-                # Fall through to local model
 
-        # TIER 2: Local SmolLM2 (last resort)
-        if not self.agent.config.local_model_enabled:
-            raise error
+            except Exception as fallback_error:
+                logger.error(f"{fallback_label} fallback also failed: {fallback_error}")
+                # Fall through to graceful message
 
-        logger.warning(f"Using local fallback model due to: {error}")
-        self._last_model_used = "smollm2"
+        # TIER 2: Local SmolLM2 (last resort before graceful message)
+        if self.agent.config.local_model_enabled:
+            try:
+                from src.integrations.local_model_client import LocalModelClient
 
-        # Generate warning
-        warning = self.router.get_fallback_message(message, error)
-
-        try:
-            from src.integrations.local_model_client import LocalModelClient
-
-            local_client = LocalModelClient(
-                model_name=self.agent.config.local_model_name,
-                endpoint=self.agent.config.local_model_endpoint
-            )
-
-            if not local_client.is_available():
-                return f"{warning}\n\n❌ Local model not available."
-
-            # RETRIEVE CONTEXT FROM BRAIN (with talent isolation)
-            messages = []
-            conversation_context = ""
-            channel = getattr(self, '_current_channel', None)
-
-            if self.brain and hasattr(self.brain, 'get_conversation_context'):
-                try:
-                    conversation_context = await self.brain.get_conversation_context(
-                        current_message=message, limit=3, channel=channel
-                    )
-                except TypeError:
-                    conversation_context = await self.brain.get_conversation_context(
-                        current_message=message, limit=3
-                    )
-
-                # Build message history
-                if hasattr(self.brain, 'get_recent_conversation'):
-                    try:
-                        recent_turns = await self.brain.get_recent_conversation(
-                            limit=3, channel=channel
-                        )
-                    except TypeError:
-                        recent_turns = await self.brain.get_recent_conversation(limit=3)
-                    for turn in reversed(recent_turns):
-                        messages.append({"role": "user", "content": turn["user_message"]})
-                        messages.append({"role": "assistant", "content": turn["assistant_response"]})
-
-            # Add current message
-            messages.append({"role": "user", "content": message})
-
-            # Enhanced system prompt with context
-            system_prompt = f"""You are a FALLBACK assistant with LIMITED capabilities.
-
-{conversation_context}
-
-IMPORTANT:
-- Continue conversation naturally based on context
-- Keep responses SHORT (1-2 sentences)
-- If asked complex question: "I'll handle that when main system is back."
-
-Capabilities:
-✅ Simple questions, acknowledgments
-❌ Code writing, complex reasoning"""
-
-            # Generate response
-            local_response = await local_client.create_message(
-                messages=messages,
-                max_tokens=300,
-                system=system_prompt
-            )
-
-            response_text = local_response["content"][0]["text"]
-
-            # Queue for Claude review (both brains support this)
-            if self.brain and hasattr(self.brain, 'queue_for_claude_review'):
-                await self.brain.queue_for_claude_review(
-                    message=message,
-                    local_response=response_text
+                local_client = LocalModelClient(
+                    model_name=self.agent.config.local_model_name,
+                    endpoint=self.agent.config.local_model_endpoint
                 )
 
-            return f"{warning}\n\n{response_text}"
+                if local_client.is_available():
+                    logger.warning(f"Using local SmolLM2 fallback due to: {error}")
+                    self._last_model_used = "smollm2"
 
-        except Exception as fallback_error:
-            logger.error(f"Fallback model failed: {fallback_error}")
-            return f"{warning}\n\n❌ Fallback error: {str(fallback_error)}"
+                    local_messages = [{"role": "user", "content": message}]
+                    system_prompt = (
+                        "You are a helpful assistant in fallback mode. "
+                        "Keep responses SHORT (1-2 sentences). "
+                        "If asked something complex, say you'll handle it when the main system is back."
+                    )
+
+                    local_response = await local_client.create_message(
+                        messages=local_messages,
+                        max_tokens=300,
+                        system=system_prompt
+                    )
+                    response_text = local_response["content"][0]["text"]
+                    return f"{response_text}\n\n_(using local backup model — responses may be simpler than usual)_"
+
+            except Exception as local_err:
+                logger.warning(f"Local model also unavailable: {local_err}")
+
+        # TIER 3: Graceful apology — all providers are down, no crash
+        logger.error(f"All LLM providers unavailable. Primary: {error}")
+        self._last_model_used = "none"
+        return (
+            "I'm temporarily unable to process your request — my AI services "
+            "are briefly unavailable. Please try again in a few minutes."
+        )
 
     async def _chat(self, message: str) -> str:
         """Have a conversation with Brain context.
@@ -920,21 +885,7 @@ RULES:
                     brain_text = brain_text[:1500] + "\n[context truncated]"
                 system_prompt += "\n\n" + brain_text
 
-            chat_model = self.router.select_model_for_chat(len(message))
-
-            # Try primary model (Claude)
-            try:
-                response = await self.anthropic_client.create_message(
-                    model=chat_model,
-                    max_tokens=300,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": message}]
-                )
-                return response.content[0].text.strip()
-            except Exception as claude_err:
-                logger.warning(f"Chat Claude failed ({str(claude_err)[:60]}), trying Gemini...")
-
-            # Fallback: Gemini Flash for chat
+            # Primary: Gemini Flash via LiteLLM
             if self.gemini_client and self.gemini_client.enabled:
                 try:
                     response = await self.gemini_client.create_message(
@@ -950,9 +901,38 @@ RULES:
                     if text.strip():
                         return text.strip()
                 except Exception as gemini_err:
-                    logger.error(f"Chat Gemini also failed: {gemini_err}")
+                    logger.warning(f"Chat Gemini failed ({str(gemini_err)[:60]}), trying Claude...")
 
-            return "Hey! I'm having a moment — try again in a sec. 😊"
+                # Fallback: Claude Sonnet via LiteLLM
+                try:
+                    response = await self.gemini_client.create_message(
+                        model="anthropic/claude-sonnet-4-5",
+                        messages=[{"role": "user", "content": message}],
+                        system=system_prompt,
+                        max_tokens=300
+                    )
+                    text = ""
+                    for block in response.content:
+                        if hasattr(block, 'text'):
+                            text += block.text
+                    if text.strip():
+                        return text.strip()
+                except Exception as claude_err:
+                    logger.error(f"Chat Claude also failed: {claude_err}")
+            else:
+                # No LiteLLM — direct Anthropic call
+                try:
+                    response = await self.anthropic_client.create_message(
+                        model="claude-sonnet-4-5",
+                        max_tokens=300,
+                        system=system_prompt,
+                        messages=[{"role": "user", "content": message}]
+                    )
+                    return response.content[0].text.strip()
+                except Exception as direct_err:
+                    logger.error(f"Direct Claude chat failed: {direct_err}")
+
+            return "Hey! I'm having a moment — try again in a sec."
 
         except Exception as e:
             logger.error(f"Chat error: {e}")
@@ -999,11 +979,12 @@ User says "John is my brother" → relationship|John is user's brother
 User says "haha that's funny" → none
 User says "good morning" → none"""
 
-            # Try Gemini Flash first (cheap, fast — ideal for fact extraction)
+            # Try Gemini Flash first, fall back to Claude Haiku — all via LiteLLM
             learn_messages = [{"role": "user", "content": f"User: {user_message}\nBot: {bot_response}"}]
             response = None
 
             if self.gemini_client and self.gemini_client.enabled:
+                # Primary: Gemini Flash via LiteLLM
                 try:
                     response = await self.gemini_client.create_message(
                         model="gemini/gemini-2.0-flash",
@@ -1012,16 +993,32 @@ User says "good morning" → none"""
                         max_tokens=100
                     )
                 except Exception as e:
-                    logger.debug(f"Gemini learn extraction failed, trying Claude: {e}")
+                    logger.debug(f"Gemini learn extraction failed, trying Claude Haiku: {e}")
 
-            # Fallback to Claude if Gemini unavailable or failed
-            if response is None:
-                response = await self.anthropic_client.create_message(
-                    model=intent_model,
-                    max_tokens=100,
-                    system=extract_prompt,
-                    messages=learn_messages
-                )
+                # Fallback: Claude Haiku via LiteLLM
+                if response is None:
+                    try:
+                        response = await self.gemini_client.create_message(
+                            model="anthropic/claude-haiku-4-5",
+                            messages=learn_messages,
+                            system=extract_prompt,
+                            max_tokens=100
+                        )
+                    except Exception as e:
+                        logger.debug(f"Claude Haiku learn extraction also failed: {e}")
+                        return
+            else:
+                # No LiteLLM — direct Anthropic call
+                try:
+                    response = await self.anthropic_client.create_message(
+                        model=intent_model,
+                        max_tokens=100,
+                        system=extract_prompt,
+                        messages=learn_messages
+                    )
+                except Exception as e:
+                    logger.debug(f"Direct Claude learn extraction failed: {e}")
+                    return
 
             facts_text = response.content[0].text.strip()
             if facts_text.lower() == "none":
@@ -1265,7 +1262,7 @@ Examples:
 "How does photosynthesis work?" → question|high|none|none
 "Do the thing" (no context) → clarify|low|What would you like me to do?|none"""
 
-            # Try primary intent client
+            # Try primary intent client (Gemini Flash via LiteLLM)
             try:
                 response = await intent_client.create_message(
                     model=intent_model,
@@ -1274,20 +1271,30 @@ Examples:
                     messages=[{"role": "user", "content": message}]
                 )
             except Exception as e:
-                # If primary was Gemini and failed (e.g. missing litellm), fall back to Anthropic
-                if intent_provider == "gemini" and self.anthropic_client:
-                    logger.warning(f"Gemini intent parsing failed ({e}), falling back to Claude...")
-                    intent_client = self.anthropic_client
-                    intent_model = "claude-3-haiku-20240307"  # Hardcode fallback model
-                    
-                    response = await intent_client.create_message(
-                        model=intent_model,
+                # Cross-provider fallback: Gemini failed → try Claude via LiteLLM
+                if intent_provider == "gemini" and self.gemini_client:
+                    logger.warning(f"Gemini intent parsing failed ({e}), falling back to Claude Haiku via LiteLLM...")
+                    try:
+                        response = await self.gemini_client.create_message(
+                            model="anthropic/claude-haiku-4-5",
+                            max_tokens=120,
+                            system=intent_prompt,
+                            messages=[{"role": "user", "content": message}]
+                        )
+                    except Exception as claude_err:
+                        logger.warning(f"Claude Haiku intent also failed ({claude_err}), using keyword fallback")
+                        raise claude_err
+                elif self.anthropic_client:
+                    # No LiteLLM — direct Anthropic fallback
+                    logger.warning(f"Intent parsing failed ({e}), falling back to direct Claude...")
+                    response = await self.anthropic_client.create_message(
+                        model="claude-haiku-4-5",
                         max_tokens=120,
                         system=intent_prompt,
                         messages=[{"role": "user", "content": message}]
                     )
                 else:
-                    raise e  # Re-raise if no fallback possible
+                    raise e
 
             raw_response = response.content[0].text.strip()
             logger.debug(f"LLM raw intent response: {raw_response}")

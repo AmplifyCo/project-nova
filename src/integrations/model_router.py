@@ -319,7 +319,7 @@ class ModelRouter:
         return None
 
     def should_use_fallback(self, error: Exception) -> bool:
-        """Determine if we should fall back to local model.
+        """Determine if we should fall back to alternate provider.
 
         Args:
             error: The exception that occurred
@@ -328,15 +328,25 @@ class ModelRouter:
             True if should use fallback
         """
         error_str = str(error).lower()
-        
+
         # Rate limit errors (429)
-        if "429" in error_str or "rate" in error_str or "resource exhausted" in error_str:
+        if "429" in error_str or "resource exhausted" in error_str:
             logger.warning(f"Rate limit error detected: {error}")
             return True
 
-        # API errors (500, 503, bad request, litellm errors)
-        if any(x in error_str for x in ["500", "503", "api", "bad request", "litellm", "authentication"]):
-            logger.warning(f"API error detected: {error}")
+        # Server errors (5xx)
+        if any(x in error_str for x in ["500", "502", "503", "overloaded"]):
+            logger.warning(f"Server error detected: {error}")
+            return True
+
+        # LiteLLM routing errors
+        if "litellm" in error_str or "bad request" in error_str:
+            logger.warning(f"LiteLLM error detected: {error}")
+            return True
+
+        # Authentication errors (wrong/missing API key)
+        if "authentication" in error_str or "api key" in error_str or "unauthorized" in error_str:
+            logger.warning(f"Authentication error detected: {error}")
             return True
 
         # Connection errors
@@ -344,15 +354,15 @@ class ModelRouter:
             logger.warning(f"Connection error detected: {error}")
             return True
 
-        # If it's a generic Exception from our clients handling API calls, assume it's fallback-worthy
-        if "unable to" in error_str or "failed" in error_str:
+        # Generic provider failures
+        if "unable to" in error_str or "api error" in error_str:
              logger.warning(f"Generic API failure detected: {error}")
              return True
 
         return False
 
     def get_fallback_message(self, original_task: str, error: Exception) -> str:
-        """Generate fallback message when using local model.
+        """Generate fallback message when using degraded model.
 
         Args:
             original_task: The original task that failed
@@ -361,19 +371,15 @@ class ModelRouter:
         Returns:
             User-friendly fallback message
         """
+        error_str = str(error)
         error_type = "API error"
-        if "429" in str(error):
+        if "429" in error_str or "rate_limit" in error_str.lower():
             error_type = "Rate limit"
-        elif "timeout" in str(error).lower():
+        elif "timeout" in error_str.lower():
             error_type = "Timeout"
-        elif "connection" in str(error).lower():
+        elif "connection" in error_str.lower():
             error_type = "Connection issue"
+        elif "resource exhausted" in error_str.lower():
+            error_type = "Quota exhausted"
 
-        return f"""⚠️ **{error_type}** - Using local model (SmolLM2)
-
-The Claude API is temporarily unavailable. I'm using my local backup model to assist you.
-
-**Note:** Responses may be simpler than usual. For complex tasks, please try again in a few moments when the main API is available.
-
----
-"""
+        return f"⚠️ *{error_type}* — using backup model. Responses may be simpler than usual."
