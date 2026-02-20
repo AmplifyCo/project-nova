@@ -75,9 +75,21 @@ class WhatsAppOutboundTool(BaseTool):
                 success=False
             )
 
+        # Strip whatsapp: prefix if accidentally passed so we can format the number
+        to_number = to_number.replace("whatsapp:", "")
+        
+        # Clean up the number by removing spaces, dashes, parentheses
+        import re
+        to_number = re.sub(r'[^\d+]', '', to_number)
+
+        # If it's a 10-digit number without a country code, assume US/Canada and add +1
+        if len(to_number) == 10 and not to_number.startswith("+"):
+            to_number = f"+1{to_number}"
+        elif not to_number.startswith("+"):
+            to_number = f"+{to_number}"
+
         # Ensure 'whatsapp:' prefix for destination
-        if not to_number.startswith("whatsapp:"):
-            to_number = f"whatsapp:{to_number}"
+        to_number = f"whatsapp:{to_number}"
 
         try:
             logger.info(f"📤 Sending outbound WhatsApp message to {to_number}")

@@ -233,9 +233,16 @@ class TwilioCallTool(BaseTool):
 
         # Strip whatsapp: prefix if accidentally passed
         to_number = to_number.replace("whatsapp:", "")
+        
+        # Clean up the number by removing spaces, dashes, parentheses
+        import re
+        to_number = re.sub(r'[^\d+]', '', to_number)
 
-        # Ensure + prefix for international format
-        if not to_number.startswith("+"):
+        # If it's a 10-digit number without a country code, assume US/Canada and add +1
+        if len(to_number) == 10 and not to_number.startswith("+"):
+            to_number = f"+1{to_number}"
+        # Otherwise, just ensure it starts with a + for Twilio's E.164 format requirement
+        elif not to_number.startswith("+"):
             to_number = f"+{to_number}"
 
         # Try ElevenLabs first, fall back to Google Journey
