@@ -59,8 +59,8 @@ class TwilioCallTool(BaseTool):
 
     # ElevenLabs voice IDs — primary (premium, ultra-natural)
     ELEVENLABS_VOICES = {
-        "female": "EXAVITQu4vr4xnSDxMaL",   # Bella — warm, conversational
-        "male": "onwK4e9ZLuTAKqWW03F9",      # Daniel — deep, natural
+        "female": "ZMjpsMpqgbzz3erSa285",   # User-selected voice
+        "male": "ZMjpsMpqgbzz3erSa285",      # Same voice (override with env)
     }
 
     def __init__(
