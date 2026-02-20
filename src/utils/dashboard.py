@@ -153,17 +153,18 @@ class Dashboard:
         @app.post("/twilio/whatsapp")
         async def twilio_whatsapp_webhook(request: Request):
             """Handle incoming Twilio WhatsApp message (POST)."""
+            from fastapi import Response
             if not getattr(self, "twilio_whatsapp_chat", None):
                 return Response("Online", media_type="text/xml")
                 
             form_data = dict(await request.form())
             twiml = await self.twilio_whatsapp_chat.handle_webhook(form_data)
-            from fastapi import Response
             return Response(content=twiml, media_type="text/xml")
 
         @app.post("/twilio/voice")
         async def twilio_voice_webhook(request: Request):
             """Handle incoming Twilio Voice call (POST)."""
+            from fastapi import Response
             if not getattr(self, "twilio_voice_chat", None):
                 return Response("Online", media_type="text/xml")
                 
@@ -174,6 +175,7 @@ class Dashboard:
         @app.post("/twilio/voice/gather")
         async def twilio_voice_gather_webhook(request: Request):
             """Handle transcribed speech from Twilio Gather (POST)."""
+            from fastapi import Response
             if not getattr(self, "twilio_voice_chat", None):
                 return Response("Online", media_type="text/xml")
                 
