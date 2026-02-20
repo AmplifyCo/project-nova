@@ -333,7 +333,8 @@ class GeminiClient:
                 messages=[{"role": "user", "content": "Hi"}],
                 max_tokens=5,
             )
-            return bool(response.content)
+            # GeminiResponse has a content list property
+            return len(response.content) > 0 and bool(response.content[0].text)
         except Exception as e:
             logger.error(f"Gemini connection test failed: {e}")
             return False

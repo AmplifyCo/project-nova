@@ -327,20 +327,27 @@ class ModelRouter:
         Returns:
             True if should use fallback
         """
+        error_str = str(error).lower()
+        
         # Rate limit errors (429)
-        if "429" in str(error) or "rate" in str(error).lower():
+        if "429" in error_str or "rate" in error_str or "resource exhausted" in error_str:
             logger.warning(f"Rate limit error detected: {error}")
             return True
 
-        # API errors (500, 503, etc.)
-        if "500" in str(error) or "503" in str(error) or "api" in str(error).lower():
+        # API errors (500, 503, bad request, litellm errors)
+        if any(x in error_str for x in ["500", "503", "api", "bad request", "litellm", "authentication"]):
             logger.warning(f"API error detected: {error}")
             return True
 
         # Connection errors
-        if "connection" in str(error).lower() or "timeout" in str(error).lower():
+        if "connection" in error_str or "timeout" in error_str:
             logger.warning(f"Connection error detected: {error}")
             return True
+
+        # If it's a generic Exception from our clients handling API calls, assume it's fallback-worthy
+        if "unable to" in error_str or "failed" in error_str:
+             logger.warning(f"Generic API failure detected: {error}")
+             return True
 
         return False
 
