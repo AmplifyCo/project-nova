@@ -21,13 +21,14 @@ class XTool(BaseTool):
     name = "x_post"
     description = (
         "Post tweets to X (Twitter). Can post to timeline or to a specific Community. "
-        "Can also delete tweets. Use post_to_community to post in an X Community by name or ID."
+        "Can also delete tweets, retweet, quote tweet, and follow users. "
+        "Use post_to_community to post in an X Community by name or ID."
     )
     parameters = {
         "operation": {
             "type": "string",
-            "description": "Operation: 'post_tweet', 'delete_tweet', 'post_to_community', 'retweet', or 'quote_tweet'",
-            "enum": ["post_tweet", "delete_tweet", "post_to_community", "retweet", "quote_tweet"]
+            "description": "Operation: 'post_tweet', 'delete_tweet', 'post_to_community', 'retweet', 'quote_tweet', or 'follow_user'",
+            "enum": ["post_tweet", "delete_tweet", "post_to_community", "retweet", "quote_tweet", "follow_user"]
         },
         "content": {
             "type": "string",
@@ -44,6 +45,10 @@ class XTool(BaseTool):
         "quote_tweet_id": {
             "type": "string",
             "description": "ID of tweet to quote or retweet (for quote_tweet)"
+        },
+        "target_username": {
+            "type": "string",
+            "description": "X username to follow, excluding the @ symbol (e.g., 'elonmusk' or 'xdevelopers', for follow_user)"
         }
     }
 
@@ -101,6 +106,7 @@ class XTool(BaseTool):
         content: Optional[str] = None,
         tweet_id: Optional[str] = None,
         community_id: Optional[str] = None,
+        target_username: Optional[str] = None,
         **kwargs
     ) -> ToolResult:
         """Execute X operation."""
@@ -116,6 +122,8 @@ class XTool(BaseTool):
             elif operation == "quote_tweet":
                 content = content or ""  # Content is optional for quote? No, usually required. But if empty, standard quote.
                 return await self._quote_tweet(tweet_id, content, community_id)
+            elif operation == "follow_user":
+                return await self._follow_user(target_username)
             else:
                 return ToolResult(
                     success=False,
@@ -468,3 +476,83 @@ class XTool(BaseTool):
         
         logger.error(f"Failed to fetch user ID: {resp.status_code} {resp.text}")
         return None
+
+    async def _resolve_username_to_id(self, username: str) -> Optional[str]:
+        """Resolve an X username (handle) to their numeric User ID.
+        
+        Args:
+            username: The X handle without the '@'.
+            
+        Returns:
+            The user's numeric ID, or None if failed.
+        """
+        import asyncio
+        
+        # Strip '@' if provided
+        safe_username = username.strip().lstrip('@')
+        
+        def _fetch_user():
+            oauth = self._get_oauth1_session()
+            return oauth.get(f"{self.api_base}/users/by/username/{safe_username}")
+            
+        try:
+            loop = asyncio.get_event_loop()
+            resp = await loop.run_in_executor(None, _fetch_user)
+            
+            if resp.status_code == 200:
+                data = resp.json().get("data", {})
+                return data.get("id")
+            
+            logger.warning(f"Failed to resolve username '{username}': {resp.status_code} {resp.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Username resolution error: {e}")
+            return None
+
+    async def _follow_user(self, target_username: Optional[str]) -> ToolResult:
+        """Follow a user on X."""
+        import asyncio
+        
+        if not target_username:
+            return ToolResult(success=False, error="target_username is required to follow a user")
+            
+        # Get authenticated user ID (required for follow endpoint)
+        source_user_id = await self._get_me()
+        if not source_user_id:
+            return ToolResult(success=False, error="Could not determine our own User ID to execute the follow")
+            
+        # Resolve target handle to numeric ID
+        target_user_id = await self._resolve_username_to_id(target_username)
+        if not target_user_id:
+            return ToolResult(success=False, error=f"Could not find an X user with the username: @{target_username}")
+            
+        def _do_follow():
+            oauth = self._get_oauth1_session()
+            # POST /2/users/:id/following
+            # Body: {"target_user_id": "..."}
+            resp = oauth.post(
+                f"{self.api_base}/users/{source_user_id}/following",
+                json={"target_user_id": target_user_id}
+            )
+            return resp
+            
+        loop = asyncio.get_event_loop()
+        resp = await loop.run_in_executor(None, _do_follow)
+        
+        if resp.status_code in (200, 201):
+            data = resp.json()
+            is_following = data.get("data", {}).get("following", False)
+            if is_following:
+                return ToolResult(
+                    success=True,
+                    output=f"Successfully followed @{target_username.strip().lstrip('@')}",
+                    metadata={"followed": True, "target_user_id": target_user_id}
+                )
+            else:
+                 return ToolResult(
+                    success=True,
+                    output=f"Follow action succeeded, but X reported following status as false (might be pending)",
+                    metadata={"followed": False, "target_user_id": target_user_id}
+                )
+        else:
+            return self._handle_error(resp)
