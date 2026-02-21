@@ -10,6 +10,7 @@ from .bash import BashTool
 from .file import FileTool
 from .web import WebTool
 from .browser import BrowserTool
+from .search import WebSearchTool
 from ..types import ToolResult
 from ..nervous_system.policy_gate import PolicyGate
 
@@ -54,6 +55,7 @@ class ToolRegistry:
         self.register(FileTool())
         self.register(WebTool())
         self.register(BrowserTool())
+        self.register(WebSearchTool())
 
         # Register Email tool if credentials provided
         self._register_email_tool()
