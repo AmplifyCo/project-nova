@@ -181,19 +181,20 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         twilio_phone = config.twilio_phone_number
         if config.twilio_account_sid and config.twilio_auth_token and twilio_phone:
             # Determine public base URL for serving ElevenLabs audio to Twilio
-            call_base_url = None
-            tunnel_info_path = Path("data/cloudflare_tunnel.json")
-            if tunnel_info_path.exists():
-                try:
-                    import json as _json
-                    with open(tunnel_info_path, 'r') as f:
-                        tunnel_info = _json.load(f)
-                        tunnel_url = tunnel_info.get("webhook_url", "")
-                        # Extract base: "https://xxx.trycloudflare.com/telegram/webhook" → "https://xxx.trycloudflare.com"
-                        if "://" in tunnel_url:
-                            call_base_url = tunnel_url.split("/telegram")[0] if "/telegram" in tunnel_url else tunnel_url.rsplit("/", 1)[0]
-                except Exception:
-                    pass
+            # Priority: NOVA_BASE_URL env var → Cloudflare tunnel file → public IP fallback
+            call_base_url = os.getenv("NOVA_BASE_URL", "").rstrip("/") or None
+            if not call_base_url:
+                tunnel_info_path = Path("data/cloudflare_tunnel.json")
+                if tunnel_info_path.exists():
+                    try:
+                        import json as _json
+                        with open(tunnel_info_path, 'r') as f:
+                            tunnel_info = _json.load(f)
+                            tunnel_url = tunnel_info.get("webhook_url", "")
+                            if "://" in tunnel_url:
+                                call_base_url = tunnel_url.split("/telegram")[0] if "/telegram" in tunnel_url else tunnel_url.rsplit("/", 1)[0]
+                    except Exception:
+                        pass
             if not call_base_url:
                 try:
                     import subprocess as _sp
@@ -201,6 +202,8 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                     call_base_url = f"http://{public_ip}:{config.dashboard_port}"
                 except Exception:
                     pass
+            if call_base_url:
+                logger.info(f"📞 Call base URL: {call_base_url}")
 
             from src.core.tools.twilio_call import TwilioCallTool
             twilio_call_tool = TwilioCallTool(
