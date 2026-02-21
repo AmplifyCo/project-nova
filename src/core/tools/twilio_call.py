@@ -288,7 +288,7 @@ class TwilioCallTool(BaseTool):
             return ToolResult(
                 output=result_msg,
                 success=True,
-                data={"call_sid": call.sid, "status": call.status, "voice": voice_used, "has_mission": bool(mission)}
+                metadata={"call_sid": call.sid, "status": call.status, "voice": voice_used, "has_mission": bool(mission)}
             )
 
         except Exception as e:
