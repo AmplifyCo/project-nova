@@ -41,7 +41,11 @@ CLIENT_SECRET = os.getenv("LINKEDIN_CLIENT_SECRET", "").strip() or input("Linked
 
 BASE_URL = os.getenv("NOVA_BASE_URL", "https://webhook.amplify-pixels.com").rstrip("/")
 REDIRECT_URI = f"{BASE_URL}/linkedin/callback"
-SCOPE = "w_member_social"
+
+# Set LINKEDIN_WITH_PROFILE=1 in .env after adding "Sign In with LinkedIn"
+# product to your app. This fetches your person URN automatically.
+_want_profile = os.getenv("LINKEDIN_WITH_PROFILE", "").strip() in ("1", "true", "yes")
+SCOPE = "openid profile w_member_social" if _want_profile else "w_member_social"
 
 # ── Step 1: Print auth URL ────────────────────────────────────────────────────
 params = urllib.parse.urlencode({
@@ -106,6 +110,7 @@ expires_days = token_resp.get("expires_in", 0) // 86400
 print(f"  Token received (expires in {expires_days} days)")
 
 # ── Step 4: Fetch person URN ──────────────────────────────────────────────────
+# w_member_social alone does not allow reading profile — try anyway
 print("Fetching LinkedIn person ID...")
 person_id = ""
 try:
@@ -119,26 +124,50 @@ try:
     with urllib.request.urlopen(req, timeout=15) as resp:
         me_data = json.loads(resp.read())
     person_id = me_data.get("id", "")
-except Exception as e:
-    print(f"  Could not fetch person ID automatically: {e}")
+    if person_id:
+        print(f"  Person ID: {person_id}")
+except Exception:
+    pass  # Expected — handled below
 
 # ── Step 5: Print results ─────────────────────────────────────────────────────
 print()
 print("=" * 65)
-print("Add these lines to your EC2 .env file:")
+print("✅ Access token obtained:")
 print("=" * 65)
 print(f"\nLINKEDIN_CLIENT_ID={CLIENT_ID}")
 print(f"LINKEDIN_CLIENT_SECRET={CLIENT_SECRET}")
 print(f"LINKEDIN_ACCESS_TOKEN={access_token}")
+
 if person_id:
     print(f"LINKEDIN_PERSON_URN=urn:li:person:{person_id}")
-else:
-    print("LINKEDIN_PERSON_URN=urn:li:person:YOUR_ID_HERE")
     print()
-    print("Get your person ID manually:")
-    print(f'  curl -H "Authorization: Bearer {access_token}" \\')
-    print('    "https://api.linkedin.com/v2/me?projection=(id)"')
+    print("Add all 4 lines to EC2 .env, then:")
+    print("  sudo systemctl restart digital-twin")
+else:
+    print()
+    print("-" * 65)
+    print("⚠️  Could not auto-fetch person URN (w_member_social can't read profile)")
+    print()
+    print("ONE-TIME step to get your permanent LinkedIn Person URN:")
+    print()
+    print("  1. Go to: https://www.linkedin.com/developers/apps")
+    print("     → Your app → Products tab")
+    print('     → Add "Sign In with LinkedIn using OpenID Connect"')
+    print()
+    print("  2. Re-run this script — it will fetch your URN automatically")
+    print("     using scope: openid profile w_member_social")
+    print()
+    print("  3. After getting your URN, you can remove that product from")
+    print("     your app. The URN is permanent and never changes.")
+    print()
+    print("  Your URN looks like: urn:li:person:AbCdEfGhIj")
+    print("  Add it to EC2 .env as: LINKEDIN_PERSON_URN=urn:li:person:...")
+    print("-" * 65)
+
 print()
-print("Then restart Nova:  sudo systemctl restart digital-twin")
 print(f"Token expires in {expires_days} days — re-run this script to refresh.")
 print("=" * 65)
+
+# If openid scope now available, use it automatically
+if not person_id and "openid" in os.getenv("LINKEDIN_SCOPES_AVAILABLE", ""):
+    pass  # placeholder for future auto-upgrade

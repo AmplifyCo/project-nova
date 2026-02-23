@@ -350,24 +350,40 @@ class Dashboard:
 
                 expires_days = token_data.get("expires_in", 0) // 86400
 
-                # Try to fetch person ID via /v2/me?projection=(id)
-                # w_member_social sometimes allows this minimal call
+                # Try to fetch person ID.
+                # If openid scope granted → /v2/userinfo (sub field)
+                # Otherwise try /v2/me?projection=(id) (may 403 with w_member_social only)
                 env_path = _Path(__file__).parent.parent.parent / ".env"
                 person_id = ""
-                try:
-                    async with _aiohttp.ClientSession() as session:
-                        async with session.get(
-                            "https://api.linkedin.com/v2/me?projection=(id)",
-                            headers={
-                                "Authorization": f"Bearer {access_token}",
-                                "X-Restli-Protocol-Version": "2.0.0",
-                            },
-                            timeout=_aiohttp.ClientTimeout(total=15),
-                        ) as resp:
-                            me_data = await resp.json()
-                    person_id = me_data.get("id", "")
-                except Exception:
-                    pass
+                granted_scope = token_data.get("scope", "")
+
+                if "openid" in granted_scope:
+                    try:
+                        async with _aiohttp.ClientSession() as session:
+                            async with session.get(
+                                "https://api.linkedin.com/v2/userinfo",
+                                headers={"Authorization": f"Bearer {access_token}"},
+                                timeout=_aiohttp.ClientTimeout(total=15),
+                            ) as resp:
+                                person_id = (await resp.json()).get("sub", "")
+                    except Exception:
+                        pass
+
+                if not person_id:
+                    try:
+                        async with _aiohttp.ClientSession() as session:
+                            async with session.get(
+                                "https://api.linkedin.com/v2/me?projection=(id)",
+                                headers={
+                                    "Authorization": f"Bearer {access_token}",
+                                    "X-Restli-Protocol-Version": "2.0.0",
+                                },
+                                timeout=_aiohttp.ClientTimeout(total=15),
+                            ) as resp:
+                                me_data = await resp.json()
+                        person_id = me_data.get("id", "")
+                    except Exception:
+                        pass
 
                 if person_id:
                     person_urn = f"urn:li:person:{person_id}"
