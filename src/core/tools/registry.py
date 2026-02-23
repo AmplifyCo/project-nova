@@ -64,6 +64,7 @@ class ToolRegistry:
         self._register_email_tool()
         self._register_calendar_tool()
         self._register_x_tool()          # X (Twitter): search + post (renamed x_post → x_tool)
+        self._register_linkedin_tool()   # LinkedIn: post text + articles via official API
 
         # ── Personal Assistant Tools (always available) ───────────────────────
         self._register_reminder_tool()
@@ -379,6 +380,30 @@ class ToolRegistry:
 
         except Exception as e:
             logger.warning(f"Failed to register X tool: {e}")
+
+    def _register_linkedin_tool(self):
+        """Register LinkedIn tool if OAuth credentials are in environment."""
+        try:
+            access_token = os.getenv("LINKEDIN_ACCESS_TOKEN")
+            person_urn = os.getenv("LINKEDIN_PERSON_URN")
+
+            if access_token and person_urn:
+                from .linkedin import LinkedInTool
+                linkedin_tool = LinkedInTool(
+                    access_token=access_token,
+                    person_urn=person_urn,
+                )
+                self.register(linkedin_tool)
+                logger.info("💼 LinkedIn tool registered")
+            else:
+                missing = [k for k, v in {
+                    "LINKEDIN_ACCESS_TOKEN": access_token,
+                    "LINKEDIN_PERSON_URN": person_urn,
+                }.items() if not v]
+                logger.debug(f"LinkedIn tool not registered (missing: {', '.join(missing)}). Run: python scripts/linkedin_auth.py")
+
+        except Exception as e:
+            logger.warning(f"Failed to register LinkedIn tool: {e}")
 
     def _register_reminder_tool(self):
         """Register Reminder tool (always available, no credentials needed)."""
