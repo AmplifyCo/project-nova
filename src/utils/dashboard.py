@@ -362,7 +362,10 @@ class Dashboard:
                         async with _aiohttp.ClientSession() as session:
                             async with session.get(
                                 "https://api.linkedin.com/v2/userinfo",
-                                headers={"Authorization": f"Bearer {access_token}"},
+                                headers={
+                                    "Authorization": f"Bearer {access_token}",
+                                    "LinkedIn-Version": "202401",
+                                },
                                 timeout=_aiohttp.ClientTimeout(total=15),
                             ) as resp:
                                 person_id = (await resp.json()).get("sub", "")
