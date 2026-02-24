@@ -112,10 +112,12 @@ Nova is built around a biological metaphor — no heavyweight frameworks, pure P
 │                                                         │
 │  ReminderScheduler   · 30s   · fire due reminders      │
 │  TaskRunner          · 15s   · autonomous multi-step   │
-│  AttentionEngine     · 6h    · purpose-driven proactivity (driven by NovaPurpose) │
-│  SelfHealingMonitor  · 5min  · detect + auto-fix       │
-│  MemoryConsolidator  · 6h    · prune old turns         │
-│  Dashboard           · always · web monitoring UI      │
+│  AttentionEngine     · 6h    · purpose-driven proactivity (NovaPurpose) │
+│  SelfHealingMonitor  · 5min  · detect + fix; reports diffs via Telegram │
+│  MemoryConsolidator  · 6h    · prune stale turns       │
+│  DailyDigest         · 9am   · activity summary to Telegram │
+│  MemoryBackup        · daily · LanceDB snapshot to disk │
+│  Dashboard           · always · auth-gated web UI: chat + stats │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -164,6 +166,8 @@ Third-party content (emails from others) is **summarised before storage**, never
 | **Attention Engine** | `brain/attention_engine.py` | Purpose-driven proactive observations every 6h (morning brief, evening summary, curiosity scan) |
 | **Goal Decomposer** | `core/goal_decomposer.py` | Breaks complex goals into 3–7 executable subtasks |
 | **Task Runner** | `core/task_runner.py` | Autonomous background execution; notifies on Telegram when done |
+| **Critic Agent** | `brain/critic_agent.py` | Validates task output quality (score ≥ 0.75 to pass); triggers one LLM refinement pass if below threshold; fail-open |
+| **Reasoning Template Library** | `brain/reasoning_template_library.py` | Stores successful goal→subtask decompositions in LanceDB; GoalDecomposer queries before each new task to reuse proven patterns |
 | **Intent Collector** | `brain/intent_data_collector.py` | Captures live intent labels as training data for future model fine-tuning |
 
 ---
@@ -371,56 +375,94 @@ sudo systemctl restart digital-twin
 digital-twin/
 ├── src/
 │   ├── core/
-│   │   ├── conversation_manager.py   # Heart — intent routing, model selection
-│   │   ├── agent.py                  # AutonomousAgent — ReAct execution loop
+│   │   ├── conversation_manager.py        # Heart — intent routing, model selection
+│   │   ├── agent.py                       # AutonomousAgent — ReAct execution loop
+│   │   ├── context_thalamus.py            # Token budgeting + history pruning
+│   │   ├── memory_consolidator.py         # Prunes stale conversation turns (6h)
+│   │   ├── scheduler.py                   # Background task scheduler
+│   │   ├── task_queue.py                  # SQLite-backed task persistence
+│   │   ├── task_runner.py                 # Background autonomous executor
+│   │   ├── goal_decomposer.py             # LLM-based goal decomposition
+│   │   ├── config.py                      # Configuration loader
+│   │   ├── timezone.py                    # Timezone utilities
 │   │   ├── brain/
-│   │   │   ├── core_brain.py         # Intelligence principles (how to think)
-│   │   │   ├── digital_clone_brain.py # Memory (what Nova knows about you)
-│   │   │   ├── working_memory.py     # Per-session tone + state
-│   │   │   ├── episodic_memory.py    # Event-outcome history
-│   │   │   ├── nova_purpose.py       # Purpose drives: morning, evening, weekly, curiosity
-│   │   │   ├── attention_engine.py   # Purpose-driven proactive observations
-│   │   │   ├── tone_analyzer.py      # Real-time tone detection
-│   │   │   ├── semantic_router.py    # Fast-path intent matching
-│   │   │   └── intent_data_collector.py  # Training data capture
+│   │   │   ├── core_brain.py              # Intelligence principles (how to think)
+│   │   │   ├── digital_clone_brain.py     # Memory (what Nova knows about you)
+│   │   │   ├── working_memory.py          # Per-session tone + state
+│   │   │   ├── episodic_memory.py         # Event-outcome history
+│   │   │   ├── nova_purpose.py            # Purpose drives: morning, evening, weekly, curiosity
+│   │   │   ├── attention_engine.py        # Purpose-driven proactive observations
+│   │   │   ├── tone_analyzer.py           # Real-time tone detection
+│   │   │   ├── semantic_router.py         # Fast-path intent matching
+│   │   │   ├── intent_data_collector.py   # Training data capture (JSONL)
+│   │   │   ├── critic_agent.py            # Validates task output; triggers LLM refinement
+│   │   │   ├── reasoning_template_library.py  # Stores + reuses successful decompositions
+│   │   │   └── vector_db.py               # LanceDB wrapper (shared by all brain components)
 │   │   ├── tools/
-│   │   │   ├── search.py             # Tavily + DuckDuckGo web search
-│   │   │   ├── web.py                # Direct URL fetch
-│   │   │   ├── browser.py            # Playwright headless browser
-│   │   │   ├── email_tool.py         # IMAP/SMTP
-│   │   │   ├── calendar_tool.py      # CalDAV
-│   │   │   ├── x_tool.py             # X / Twitter
-│   │   │   ├── linkedin_tool.py      # LinkedIn
-│   │   │   ├── twilio_call.py        # Outbound voice calls
-│   │   │   ├── reminder_tool.py      # Scheduled reminders
-│   │   │   ├── contacts_tool.py      # Contact management
-│   │   │   └── nova_task_tool.py     # Background task queue interface
+│   │   │   ├── search.py                  # Tavily + DuckDuckGo web search
+│   │   │   ├── web.py                     # Direct URL fetch
+│   │   │   ├── browser.py                 # Playwright headless browser
+│   │   │   ├── email.py                   # IMAP/SMTP
+│   │   │   ├── calendar.py                # CalDAV
+│   │   │   ├── x_tool.py                  # X / Twitter
+│   │   │   ├── linkedin.py                # LinkedIn
+│   │   │   ├── twilio_call.py             # Outbound voice calls
+│   │   │   ├── reminder.py                # Scheduled reminders
+│   │   │   ├── contacts.py                # Contact management
+│   │   │   ├── nova_task_tool.py          # Background task queue interface
+│   │   │   ├── bash.py                    # Sandboxed shell commands
+│   │   │   ├── file.py                    # File read/write operations
+│   │   │   ├── clock.py                   # Current time
+│   │   │   └── registry.py                # Tool registration hub
 │   │   ├── nervous_system/
-│   │   │   ├── execution_governor.py # Central coordinator
-│   │   │   ├── policy_gate.py        # Risk-based permission checks
-│   │   │   ├── outbox.py             # Durable deduplication
-│   │   │   ├── dead_letter_queue.py  # Poison event handling
-│   │   │   └── state_machine.py      # Agent execution states
-│   │   ├── task_queue.py             # SQLite-backed task persistence
-│   │   ├── task_runner.py            # Background autonomous executor
-│   │   └── goal_decomposer.py        # LLM-based goal decomposition
+│   │   │   ├── execution_governor.py      # Central coordinator
+│   │   │   ├── policy_gate.py             # Risk-based permission checks
+│   │   │   ├── outbox.py                  # Durable deduplication (no double sends)
+│   │   │   ├── dead_letter_queue.py       # Poison event handling + Telegram alerts
+│   │   │   └── state_machine.py           # Agent execution states
+│   │   ├── self_healing/
+│   │   │   ├── monitor.py                 # Error detection + healing loop (5min)
+│   │   │   ├── auto_fixer.py              # LLM-generated patches; reports via Telegram
+│   │   │   ├── capability_fixer.py        # Learns new tool capabilities on failure
+│   │   │   ├── error_detector.py          # Pattern-based error classification
+│   │   │   └── response_interceptor.py    # Intercepts + logs capability gaps
+│   │   ├── security/
+│   │   │   ├── llm_security.py            # Prompt injection detection
+│   │   │   └── audit_logger.py            # Immutable action audit log
+│   │   ├── spawner/
+│   │   │   ├── agent_factory.py           # Creates sub-agent instances
+│   │   │   └── orchestrator.py            # Coordinates parallel sub-agents
+│   │   └── talents/
+│   │       ├── catalog.py                 # Dynamic capability discovery
+│   │       └── builder.py                 # Capability composition
 │   ├── channels/
-│   │   ├── telegram_channel.py       # Telegram transport
-│   │   ├── twilio_voice_channel.py   # Voice call handling
-│   │   └── twilio_whatsapp_channel.py # WhatsApp transport
+│   │   ├── telegram_channel.py            # Telegram transport
+│   │   ├── twilio_voice_channel.py        # Voice call handling
+│   │   └── twilio_whatsapp_channel.py     # WhatsApp transport
 │   ├── integrations/
-│   │   ├── anthropic_client.py       # Claude API wrapper
-│   │   ├── gemini_client.py          # Gemini via LiteLLM
-│   │   ├── grok_client.py            # Grok (xAI) via LiteLLM
-│   │   └── model_router.py           # Model tier selection
-│   └── main.py                       # Entry point + service wiring
+│   │   ├── anthropic_client.py            # Claude API wrapper
+│   │   ├── gemini_client.py               # Gemini via LiteLLM
+│   │   ├── grok_client.py                 # Grok (xAI) via LiteLLM
+│   │   ├── local_model_client.py          # SmolLM2 / Ollama offline fallback
+│   │   └── model_router.py                # Model tier selection
+│   ├── utils/
+│   │   ├── dashboard.py                   # Auth-gated web UI: chat window + live stats
+│   │   ├── daily_digest.py                # Scheduled daily activity summary via Telegram
+│   │   ├── memory_backup.py               # Periodic LanceDB snapshot to disk
+│   │   ├── telegram_notifier.py           # Standalone Telegram notification helper
+│   │   ├── auto_updater.py                # Self-update from git on restart
+│   │   └── vulnerability_scanner.py       # Periodic dependency CVE scanning
+│   ├── watchdog.py                        # Process health monitor + auto-restart
+│   └── main.py                            # Entry point + service wiring
 ├── data/
-│   ├── lancedb/                      # Vector memories (conversations, preferences)
-│   ├── intent_training/              # Intent classification training data (JSONL)
-│   ├── tasks/                        # Background task output files
-│   └── conversations/                # Daily conversation logs (JSONL)
-├── RISKS.md                          # Formal risk register
-├── SUPERVISION.md                    # Supervision methods documentation
+│   ├── lancedb/                           # Vector memories (conversations, preferences)
+│   ├── intent_training/                   # Intent classification training data (JSONL)
+│   ├── tasks/                             # Background task output files
+│   ├── fixes/                             # Self-healing fix diffs + logs
+│   └── conversations/                     # Daily conversation logs (JSONL)
+├── setup.py                               # Interactive setup wizard
+├── RISKS.md                               # Formal risk register
+├── SUPERVISION.md                         # Supervision methods documentation
 └── requirements.txt
 ```
 
