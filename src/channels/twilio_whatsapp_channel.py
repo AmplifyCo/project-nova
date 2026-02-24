@@ -4,6 +4,7 @@ Handles incoming Twilio webhooks for WhatsApp messages, passes
 them to the ConversationManager, and can send outbound messages via Twilio REST API.
 """
 
+import asyncio
 import logging
 import os
 from typing import Dict, Any, List, Optional
@@ -83,42 +84,34 @@ class TwilioWhatsAppChannel:
             return "<Response></Response>"
             
         logger.info(f"💬 Received WhatsApp message from {from_number}: {message_body[:50]}...")
-        
-        # Inform the user we received it (typing indicator equivalent)
-        # We don't block the webhook response, we use ConversationManager
+
+        clean_number = from_number.replace('whatsapp:', '')
+        clean_allowed = [num.replace('whatsapp:', '') for num in self.allowed_numbers]
+        if clean_number in clean_allowed:
+            owner_name = os.getenv("OWNER_NAME", "User")
+            user_id = f"{owner_name} (Principal)"
+        else:
+            user_id = clean_number
+
+        # Fire-and-forget: return 200 to Twilio immediately, process in background.
+        # This prevents Twilio's 15s webhook timeout from triggering on slow AI responses.
+        asyncio.create_task(self._process_and_reply(from_number, message_body, user_id))
+
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
+
+    async def _process_and_reply(self, from_number: str, message_body: str, user_id: str) -> None:
+        """Process message with ConversationManager and send reply via REST API."""
         try:
-            # We strip 'whatsapp:' prefix internally for the user_id if we want,
-            # but it is better to pass the exact identifier so we can reply back easily.
-            # actually better to just strip it so the memory aligns with phone/SMS.
-            clean_number = from_number.replace('whatsapp:', '')
-            
-            # Explicitly identify the Principal to the LLM so it doesn't get confused
-            # when asked to contact other people.
-            clean_allowed = [num.replace('whatsapp:', '') for num in self.allowed_numbers]
-            if clean_number in clean_allowed:
-                owner_name = os.getenv("OWNER_NAME", "User")
-                user_id = f"{owner_name} (Principal)"
-            else:
-                user_id = clean_number
-            
-            # Let's pass it to the ConversationManager, and we'll reply directly 
-            # upon getting the return value (simpler integration).
             ai_response = await self.conversation_manager.process_message(
                 message=message_body,
                 channel="whatsapp",
                 user_id=user_id,
-                enable_periodic_updates=False # To avoid duplicate 'thinking' messages if we don't have async streaming
+                enable_periodic_updates=False,
             )
-            
-            # Send the reply asynchronously using Twilio REST API
             self.send_message(to=from_number, body=ai_response)
-            
         except Exception as e:
             logger.error(f"Error processing WhatsApp message: {e}", exc_info=True)
             self.send_message(to=from_number, body="Sorry, I encountered an error processing your request.")
-            
-        # Return empty TwiML because we responded via REST API
-        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
 
     def send_message(self, to: str, body: str) -> bool:
         """Send an outbound WhatsApp message using Twilio REST API.
