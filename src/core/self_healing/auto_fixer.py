@@ -673,14 +673,14 @@ class AutoFixer:
         branch_name = f"auto-fix/{fix_id}"
         
         if risk_level == "SENSITIVE":
-            # Push to branch ONLY (do not apply)
-            await self._push_fix_to_branch(file_path, fix_diff, branch_name, f"Security-gated fix for {error.error_type.value}")
-            
+            # Report locally only — no git operations
+            await self._report_fix_locally(error, fix_diff)
+
             return FixResult(
                 success=True,
                 error_type=error.error_type,
-                action_taken=f"⚠️ Fix pushed to branch {branch_name} (Security Risk)",
-                details=f"Classified as SENSITIVE: {risk_reason}. Review branch {branch_name}",
+                action_taken="⚠️ Fix identified — reported via Telegram (Security Risk, not applied)",
+                details=f"Classified as SENSITIVE: {risk_reason}. Review the Telegram notification.",
                 requires_restart=False
             )
 
@@ -709,14 +709,14 @@ class AutoFixer:
                     details=stderr.decode()
                 )
 
-            # Push to branch for record keeping/merge
-            await self._push_fix_to_branch(file_path, fix_diff, branch_name, f"Auto-fix for {error.error_type.value}")
+            # Report applied fix locally via Telegram
+            await self._report_fix_locally(error, fix_diff, applied=True)
 
             return FixResult(
                 success=True,
                 error_type=error.error_type,
-                action_taken=f"Applied fix & pushed to {branch_name}",
-                details="Automatically patched and backed up to git branch",
+                action_taken="Applied fix locally — reported via Telegram",
+                details="Automatically patched. No git operations performed.",
                 requires_restart=True
             )
 
@@ -818,8 +818,27 @@ class AutoFixer:
             
         return "SAFE", "Passed checks"
 
-    async def _push_fix_to_branch(self, file_path: str, diff: str, branch_name: str, commit_msg: str):
-        """Push the fix to a new git branch without disrupting the current working tree."""
+    async def _report_fix_locally(self, error, diff: str, applied: bool = False):
+        """Report a detected fix to the owner via Telegram — no git operations."""
+        summary = diff[:800] if diff else "(no diff generated)"
+        status = "Applied locally" if applied else "Not applied (security risk)"
+        msg = (
+            f"🔧 *Self-Healing: Fix {'Applied' if applied else 'Identified (not applied)'}*\n\n"
+            f"*Error type:* {error.error_type.value}\n"
+            f"*Message:* {str(error.message)[:200]}\n"
+            f"*Status:* {status}\n\n"
+            f"*Suggested diff:*\n```\n{summary}\n```\n\n"
+            f"{'Fix was applied automatically.' if applied else 'Review and apply manually if appropriate.'}"
+        )
+        if self.telegram:
+            try:
+                await self.telegram.notify(msg, level="warning")
+            except Exception as e:
+                logger.warning(f"Fix report notification failed: {e}")
+        logger.info(f"Fix reported locally (no git push): {error.error_type.value}")
+
+    async def _push_fix_to_branch_DISABLED(self, file_path: str, diff: str, branch_name: str, commit_msg: str):
+        """Disabled — self-healing is local-only. Use _report_fix_locally() instead."""
         try:
             # 1. Fetch latest to ensure we have base
             await asyncio.create_subprocess_shell("git fetch origin main")

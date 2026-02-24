@@ -111,6 +111,14 @@ PROVIDERS = [
         "local":        False,
     },
     {
+        "name":         "xAI (Grok)",
+        "env_key":      "GROK_API_KEY",
+        "litellm_id":   "xai/grok-2-1212",
+        "get_key_url":  "https://console.x.ai/",
+        "key_hint":     "Starts with xai-...",
+        "local":        False,
+    },
+    {
         "name":         "Other  (any OpenAI-compatible endpoint)",
         "env_key":      "OPENAI_API_KEY",
         "litellm_id":   None,                   # filled in during setup
@@ -187,6 +195,14 @@ FEATURES = {
              "hint": "elevenlabs.io → Voices → copy any voice ID you like", "secret": False},
         ],
     },
+    "tavily": {
+        "title":   "Tavily Search  (Web search for Nova)",
+        "tagline": "Nova searches the web reliably. Tavily is purpose-built for AI agents and works on cloud/EC2 IPs where DuckDuckGo fails.",
+        "fields": [
+            {"key": "TAVILY_API_KEY", "label": "Tavily API key",
+             "hint": "Free at tavily.com — 1000 searches/month. Get key at: app.tavily.com/home", "secret": True},
+        ],
+    },
 }
 
 
@@ -196,6 +212,7 @@ You are Nova's friendly setup assistant running in a user's terminal. \
 Your job is to guide them through configuring optional features for their Nova AI assistant.
 
 Nova is a self-hosted personal AI. It connects via Telegram and can:
+• Search the web        (feature key: tavily)
 • Send/read email       (feature key: email)
 • WhatsApp/SMS/calls    (feature key: twilio)
 • Post to X / search X (feature key: x)
@@ -206,10 +223,11 @@ Conversation style:
 - Warm and concise. 2-3 sentences per turn unless giving step-by-step instructions.
 - Ask one question at a time. Don't repeat yourself.
 - Recommend features based on what the user tells you they want to do.
+- Recommend Tavily search early — it makes Nova much more useful.
 
 Signal protocol (Python parses these — include exactly as shown):
 - When the user agrees to set up a feature: end your message with [SETUP:feature_key]
-  (feature_key is one of: email, twilio, x, calendar, elevenlabs)
+  (feature_key is one of: tavily, email, twilio, x, calendar, elevenlabs)
 - When setup is complete and user wants to finish: end with [DONE]
 - Otherwise: no signal needed.
 
@@ -383,7 +401,7 @@ def main():
     env_data["BOT_NAME"] = "Nova"
 
     # ── LLM provider ─────────────────────────────────────────────────
-    _section("Step 1 — Choose your AI provider")
+    _section("Step 1 — Choose your AI provider (at least one required)")
     print("  Nova works with any of these providers.\n"
           "  Pick whichever you already have a key for.\n")
 
@@ -463,8 +481,38 @@ def main():
             gk = _ask("Gemini API key", secret=True)
             env_data["GEMINI_API_KEY"] = gk
 
+    # ── Tunnel (required for Telegram webhooks) ──────────────────────
+    _section("Step 2 — Expose Nova to the Internet  (required for Telegram)")
+    print("  Nova needs a public HTTPS URL so Telegram can send you messages.\n"
+          "  The easiest option is Cloudflare Tunnel — free, no port forwarding.\n")
+
+    print(f"  {C.BOLD}Option A — Cloudflare Tunnel  (recommended, free):{C.RST}")
+    print(f"  1. Go to {C.CYAN}dash.cloudflare.com{C.RST}  →  Zero Trust  →  Networks  →  Tunnels")
+    print(f"  2. Click {C.BOLD}Create a tunnel{C.RST}  →  name it {C.CYAN}nova{C.RST}  →  copy the tunnel token")
+    print(f"  3. On your server:")
+    print(f"     {C.DIM}curl -L --output cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64{C.RST}")
+    print(f"     {C.DIM}chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/{C.RST}")
+    print(f"     {C.DIM}sudo cloudflared service install <your-tunnel-token>{C.RST}")
+    print(f"  4. Add a Public Hostname  →  subdomain {C.CYAN}nova{C.RST}, service {C.CYAN}http://localhost:18789{C.RST}")
+    print(f"     Your URL will be: {C.CYAN}https://nova.yourdomain.com{C.RST}\n")
+
+    print(f"  {C.BOLD}Option B — ngrok  (for local/dev use only):{C.RST}")
+    print(f"     {C.DIM}ngrok http 18789{C.RST}")
+    print(f"     Copy the https:// URL shown\n")
+
+    tunnel_url = _ask(
+        "Your public HTTPS URL (e.g. https://nova.yourdomain.com)",
+        allow_empty=True,
+        default=""
+    )
+    if tunnel_url:
+        env_data["CLOUDFLARE_TUNNEL_LOCAL_URL"] = tunnel_url.rstrip("/")
+        _ok(f"Tunnel URL saved: {tunnel_url}")
+    else:
+        _warn("Skipped — you can add CLOUDFLARE_TUNNEL_LOCAL_URL to .env later.")
+
     # ── Telegram (required) ──────────────────────────────────────────
-    _section("Step 2 — Telegram  (required)")
+    _section("Step 3 — Telegram  (required)")
     print("  Telegram is how you talk to Nova every day.\n")
     print(f"  {C.BOLD}Quick setup:{C.RST}")
     print(f"  1. Open Telegram  →  search {C.CYAN}@BotFather{C.RST}")
@@ -557,6 +605,17 @@ def main():
             break
 
         history.append({"role": "user", "content": user_input})
+
+    # ── Dashboard credentials ─────────────────────────────────────────
+    _section("Step — Secure your Dashboard")
+    print("  Nova's web dashboard is accessible at your public tunnel URL.\n"
+          "  Set a username and password to protect it.\n")
+    dash_user = _ask("Dashboard username", default="nova")
+    dash_pass = _ask("Dashboard password", secret=True, allow_empty=False)
+    env_data["DASHBOARD_USERNAME"] = dash_user
+    env_data["DASHBOARD_PASSWORD"] = dash_pass
+    _write_env(env_data)
+    _ok("Dashboard credentials saved.")
 
     # ── Summary ──────────────────────────────────────────────────────
     _section("Setup Complete!")

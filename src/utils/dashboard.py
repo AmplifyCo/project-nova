@@ -1,28 +1,27 @@
-"""Simple web dashboard for monitoring the agent."""
+"""Nova web dashboard — auth-gated chat interface and live monitoring."""
 
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import os
+import re
 import secrets
-from datetime import datetime
-from typing import Dict, Any, List
-import json
+from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# HTTP paths exempt from auth (webhooks must be reachable without login)
+_EXEMPT_PATHS = {"/health", "/login", "/logout", "/telegram/webhook", "/linkedin/callback"}
+_EXEMPT_PREFIXES = ("/twilio/", "/audio/", "/ws/")
+
 
 class Dashboard:
-    """Simple web dashboard using FastAPI."""
+    """Web dashboard with session auth, chat window, and live stats."""
 
     def __init__(self, host: str = "0.0.0.0", port: int = 18789):
-        """Initialize dashboard.
-
-        Args:
-            host: Host to bind to
-            port: Port to bind to
-        """
         self.host = host
         self.port = port
         self.status = {
@@ -32,8 +31,20 @@ class Dashboard:
             "uptime_seconds": 0,
             "last_update": datetime.now().isoformat()
         }
-        self.logs = []
+        self.logs: List[Dict] = []
         self.max_logs = 100
+        self._start_time = datetime.now()
+
+        # ── Auth ───────────────────────────────────────────────────────
+        self._sessions: Dict[str, datetime] = {}   # token → expiry (24h TTL)
+        self._dashboard_username = os.getenv("DASHBOARD_USERNAME", "nova")
+        self._dashboard_password = os.getenv("DASHBOARD_PASSWORD", "")
+
+        # ── Wired components ───────────────────────────────────────────
+        self._conversation_manager = None
+        self._owner_chat_id: Optional[str] = None
+        self._task_queue = None
+        self._brain = None
 
         try:
             from fastapi import FastAPI
@@ -52,60 +63,38 @@ class Dashboard:
             logger.warning("Install with: pip install fastapi uvicorn")
             self.enabled = False
 
-    def update_status(self, **kwargs):
-        """Update dashboard status.
+    # ── Status helpers ─────────────────────────────────────────────────
 
-        Args:
-            **kwargs: Status fields to update
-        """
+    def update_status(self, **kwargs):
         self.status.update(kwargs)
         self.status["last_update"] = datetime.now().isoformat()
 
     def add_log(self, message: str, level: str = "info"):
-        """Add log entry.
-
-        Args:
-            message: Log message
-            level: Log level
-        """
         self.logs.append({
             "timestamp": datetime.now().isoformat(),
             "level": level,
             "message": message
         })
-
-        # Keep only last N logs
         if len(self.logs) > self.max_logs:
             self.logs = self.logs[-self.max_logs:]
+
+    # ── Webhook security ───────────────────────────────────────────────
 
     def _configure_webhook_security(self, twilio_auth_token: str = "", base_url: str = ""):
         """Store credentials needed for webhook signature validation.
 
         Called from main.py after credentials are loaded from env.
         Must be called before start() so the webhook handlers can validate.
-
-        Args:
-            twilio_auth_token: Twilio Auth Token (used to verify HMAC-SHA1 signatures)
-            base_url: Public HTTPS base URL (e.g. https://webhook.amplify-pixels.com)
         """
         self._twilio_auth_token = twilio_auth_token
         self._base_url = base_url.rstrip("/")
-        # Generate a random secret for Telegram webhook validation
-        # This is sent to Telegram when registering the webhook and verified on each update
         self._telegram_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET") or secrets.token_hex(32)
         logger.info("Webhook security configured (Twilio HMAC + Telegram secret token)")
 
     def _validate_twilio_signature(self, request_url: str, params: dict, signature: str) -> bool:
-        """Validate Twilio webhook signature (HMAC-SHA1).
-
-        Twilio signs every webhook request. An invalid/missing signature means
-        the request did NOT come from Twilio — reject it.
-
-        See: https://www.twilio.com/docs/usage/webhooks/webhooks-security
-        """
+        """Validate Twilio webhook signature (HMAC-SHA1)."""
         auth_token = getattr(self, '_twilio_auth_token', '')
         if not auth_token:
-            # No token configured — log warning but allow (dev mode)
             logger.warning("Twilio auth token not set — skipping signature validation (dev mode)")
             return True
         if not signature:
@@ -120,92 +109,274 @@ class Dashboard:
             return False
 
     def _validate_telegram_secret(self, header_token: str) -> bool:
-        """Validate Telegram webhook secret token.
-
-        Telegram sends the secret token in X-Telegram-Bot-Api-Secret-Token.
-        Verified with a constant-time comparison to prevent timing attacks.
-        """
+        """Validate Telegram webhook secret token (constant-time comparison)."""
         expected = getattr(self, '_telegram_secret', '')
         if not expected:
-            return True  # Not configured — dev mode
+            return True  # Dev mode — not configured
         if not header_token:
             return False
         return hmac.compare_digest(expected, header_token)
 
     def get_telegram_webhook_secret(self) -> str:
-        """Return the Telegram webhook secret (set during webhook registration)."""
         return getattr(self, '_telegram_secret', '')
 
-    def set_telegram_chat(self, telegram_chat):
-        """Set Telegram chat handler for webhook endpoint.
+    # ── Session auth ───────────────────────────────────────────────────
 
-        Args:
-            telegram_chat: TelegramChat instance
-        """
+    def _is_auth_required(self) -> bool:
+        """Auth is only enforced when DASHBOARD_PASSWORD is set."""
+        return bool(self._dashboard_password)
+
+    def _create_session(self) -> str:
+        """Create a new session token with 24-hour TTL."""
+        token = secrets.token_hex(32)
+        self._sessions[token] = datetime.now() + timedelta(hours=24)
+        # Prune expired sessions
+        now = datetime.now()
+        self._sessions = {t: exp for t, exp in self._sessions.items() if exp > now}
+        return token
+
+    def _is_valid_session(self, token: str) -> bool:
+        """Return True if the session token is valid and not expired."""
+        if not token or token not in self._sessions:
+            return False
+        if datetime.now() > self._sessions[token]:
+            del self._sessions[token]
+            return False
+        return True
+
+    # ── Component wiring ───────────────────────────────────────────────
+
+    def set_telegram_chat(self, telegram_chat):
         self.telegram_chat = telegram_chat
         logger.info("Telegram chat handler registered with dashboard")
 
     def set_twilio_whatsapp_chat(self, twilio_whatsapp_chat):
-        """Set Twilio WhatsApp chat handler for webhook endpoint.
-
-        Args:
-            twilio_whatsapp_chat: TwilioWhatsAppChannel instance
-        """
         self.twilio_whatsapp_chat = twilio_whatsapp_chat
         logger.info("Twilio WhatsApp chat handler registered with dashboard")
 
     def set_twilio_voice_chat(self, twilio_voice_chat):
-        """Set Twilio Voice chat handler for webhook endpoint.
-
-        Args:
-            twilio_voice_chat: TwilioVoiceChannel instance
-        """
         self.twilio_voice_chat = twilio_voice_chat
-        logger.info("WhatsApp chat handler registered with dashboard")
+        logger.info("Twilio Voice chat handler registered with dashboard")
+
+    def set_conversation_manager(self, cm, owner_chat_id=None):
+        """Wire the conversation manager so dashboard chat routes through it."""
+        self._conversation_manager = cm
+        self._owner_chat_id = str(owner_chat_id) if owner_chat_id else "dashboard"
+        logger.info("Conversation manager wired to dashboard")
+
+    def set_task_queue(self, tq):
+        """Wire the task queue for the stats widget."""
+        self._task_queue = tq
+        logger.info("Task queue wired to dashboard")
+
+    def set_brain(self, brain):
+        """Wire the digital brain for the contacts stats widget."""
+        self._brain = brain
+        logger.info("Digital brain wired to dashboard")
+
+    # ── Stats helpers ──────────────────────────────────────────────────
+
+    def _get_messages_today(self) -> int:
+        """Count messages handled today from in-memory logs."""
+        today = datetime.now().date()
+        count = 0
+        for entry in self.logs:
+            try:
+                ts = datetime.fromisoformat(entry["timestamp"]).date()
+                if ts == today and "Starting autonomous execution" in entry.get("message", ""):
+                    count += 1
+            except Exception:
+                pass
+        return count
+
+    def _get_uptime_str(self) -> str:
+        delta = datetime.now() - self._start_time
+        total_seconds = int(delta.total_seconds())
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        if hours >= 24:
+            days = hours // 24
+            return f"{days}d {hours % 24}h {minutes}m"
+        return f"{hours}h {minutes}m"
+
+    # ── Server ─────────────────────────────────────────────────────────
 
     async def start(self):
-        """Start dashboard server."""
+        """Start dashboard server with auth, chat, and stats."""
         if not self.enabled:
             logger.warning("Dashboard not enabled")
             return
 
-        from fastapi import FastAPI, Request
-        app = FastAPI(title="Autonomous Agent Dashboard")
+        from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+        from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response as FR
 
-        @app.get("/", response_class=self.HTMLResponse)
+        app = FastAPI(title="Nova Dashboard")
+
+        # ── Auth middleware (HTTP routes only — /ws/ is handled inside handler) ──
+        @app.middleware("http")
+        async def auth_middleware(request: Request, call_next):
+            if not self._is_auth_required():
+                return await call_next(request)
+
+            path = request.url.path
+            # Exempt paths bypass auth
+            if path in _EXEMPT_PATHS or any(path.startswith(p) for p in _EXEMPT_PREFIXES):
+                return await call_next(request)
+
+            token = request.cookies.get("nova_session", "")
+            if self._is_valid_session(token):
+                return await call_next(request)
+
+            # Unauthorized — redirect HTML requests, 401 API requests
+            if path.startswith("/api/"):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            return RedirectResponse(url="/login", status_code=303)
+
+        # ── Login / logout ────────────────────────────────────────────
+        @app.get("/login", response_class=HTMLResponse)
+        async def login_page():
+            return HTMLResponse(self._get_login_html())
+
+        @app.post("/login")
+        async def login_submit(request: Request):
+            form = await request.form()
+            username = str(form.get("username", ""))
+            password = str(form.get("password", ""))
+            if (username == self._dashboard_username and
+                    self._dashboard_password and
+                    hmac.compare_digest(password, self._dashboard_password)):
+                token = self._create_session()
+                resp = RedirectResponse(url="/", status_code=303)
+                resp.set_cookie(
+                    "nova_session", token,
+                    httponly=True, samesite="lax", max_age=86400,
+                )
+                return resp
+            return HTMLResponse(self._get_login_html(error="Invalid username or password"))
+
+        @app.get("/logout")
+        async def logout(request: Request):
+            token = request.cookies.get("nova_session", "")
+            if token in self._sessions:
+                del self._sessions[token]
+            resp = RedirectResponse(url="/login", status_code=303)
+            resp.delete_cookie("nova_session")
+            return resp
+
+        # ── Main dashboard ────────────────────────────────────────────
+        @app.get("/", response_class=HTMLResponse)
         async def root():
-            """Serve dashboard HTML."""
-            return self._get_dashboard_html()
+            return HTMLResponse(self._get_dashboard_html())
 
-        @app.get("/api/status", response_class=self.JSONResponse)
-        async def get_status(request: Request):
-            """Get current status — restricted to localhost."""
-            if request.client and request.client.host not in ("127.0.0.1", "::1"):
-                from fastapi import Response as FR
-                return FR(status_code=403)
+        # ── Stats API ─────────────────────────────────────────────────
+        @app.get("/api/stats", response_class=JSONResponse)
+        async def api_stats():
+            # Contacts count from brain
+            contacts = 0
+            if self._brain:
+                try:
+                    if hasattr(self._brain, 'get_contacts'):
+                        c = self._brain.get_contacts()
+                        if asyncio.iscoroutine(c):
+                            c = await c
+                        contacts = len(c) if c else 0
+                    elif hasattr(self._brain, 'contacts'):
+                        contacts = len(self._brain.contacts)
+                except Exception:
+                    pass
+
+            # Task counts
+            tasks_pending = 0
+            tasks_total = 0
+            if self._task_queue:
+                try:
+                    if hasattr(self._task_queue, 'get_pending_count'):
+                        r = self._task_queue.get_pending_count()
+                        tasks_pending = (await r) if asyncio.iscoroutine(r) else r
+                    if hasattr(self._task_queue, 'get_total_count'):
+                        r = self._task_queue.get_total_count()
+                        tasks_total = (await r) if asyncio.iscoroutine(r) else r
+                except Exception:
+                    pass
+
+            delta = datetime.now() - self._start_time
+            return {
+                "contacts": contacts,
+                "tasks_pending": tasks_pending,
+                "tasks_total": tasks_total,
+                "messages_today": self._get_messages_today(),
+                "uptime_seconds": int(delta.total_seconds()),
+                "nova_status": "online",
+            }
+
+        @app.get("/api/status", response_class=JSONResponse)
+        async def get_status():
             return self.status
 
-        @app.get("/api/logs", response_class=self.JSONResponse)
-        async def get_logs(request: Request):
-            """Get recent logs — restricted to localhost."""
-            if request.client and request.client.host not in ("127.0.0.1", "::1"):
-                from fastapi import Response as FR
-                return FR(status_code=403)
-            return {"logs": self.logs[-50:]}  # Last 50 logs
+        @app.get("/api/logs", response_class=JSONResponse)
+        async def get_logs():
+            return {"logs": self.logs[-50:]}
 
+        # ── WebSocket chat ────────────────────────────────────────────
+        @app.websocket("/ws/chat")
+        async def chat_websocket(websocket: WebSocket):
+            # Auth check on initial handshake
+            if self._is_auth_required():
+                token = websocket.cookies.get("nova_session", "")
+                if not self._is_valid_session(token):
+                    await websocket.close(code=1008)
+                    return
+
+            await websocket.accept()
+            try:
+                while True:
+                    msg = (await websocket.receive_text()).strip()
+                    if not msg:
+                        continue
+
+                    if not self._conversation_manager:
+                        await websocket.send_text(json.dumps({
+                            "sender": "nova",
+                            "text": "Dashboard chat not connected yet. Please try again shortly.",
+                            "timestamp": datetime.now().isoformat(),
+                        }))
+                        continue
+
+                    try:
+                        response = await self._conversation_manager.process_message(
+                            user_message=msg,
+                            channel="dashboard",
+                            user_id="owner",
+                            chat_id=self._owner_chat_id or "dashboard",
+                        )
+                        reply = response if isinstance(response, str) else str(response)
+                    except Exception as e:
+                        logger.error(f"Dashboard chat error: {e}", exc_info=True)
+                        reply = "Sorry, something went wrong processing your message."
+
+                    await websocket.send_text(json.dumps({
+                        "sender": "nova",
+                        "text": reply,
+                        "timestamp": datetime.now().isoformat(),
+                    }))
+
+            except WebSocketDisconnect:
+                logger.debug("Dashboard WebSocket client disconnected")
+
+        # ── Health check ──────────────────────────────────────────────
         @app.get("/health")
         async def health():
-            """Health check endpoint."""
             return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
+        # ── Telegram webhook ──────────────────────────────────────────
         @app.post("/telegram/webhook")
         async def telegram_webhook(request: Request):
-            """Handle Telegram webhook — validates secret token."""
-            from fastapi import Response as FR
-            # Validate Telegram secret token
             tg_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
             if not self._validate_telegram_secret(tg_secret):
-                logger.warning(f"Telegram webhook rejected: invalid secret token from {request.client.host if request.client else 'unknown'}")
+                logger.warning(
+                    f"Telegram webhook rejected: invalid secret token from "
+                    f"{request.client.host if request.client else 'unknown'}"
+                )
                 return FR(status_code=403)
 
             if not hasattr(self, 'telegram_chat') or not self.telegram_chat:
@@ -221,33 +392,32 @@ class Dashboard:
                 logger.error(f"Error in Telegram webhook: {e}", exc_info=True)
                 return {"ok": False, "error": str(e)}
 
+        # ── Twilio WhatsApp webhook ────────────────────────────────────
         @app.post("/twilio/whatsapp")
         async def twilio_whatsapp_webhook(request: Request):
-            """Handle incoming Twilio WhatsApp message — validates Twilio signature."""
-            from fastapi import Response
             form_data = dict(await request.form())
-
             base = getattr(self, '_base_url', '')
             url = f"{base}/twilio/whatsapp" if base else str(request.url)
             sig = request.headers.get("X-Twilio-Signature", "")
             if not self._validate_twilio_signature(url, form_data, sig):
-                logger.warning(f"Twilio WhatsApp webhook rejected: invalid signature from {request.client.host if request.client else 'unknown'}")
-                return Response(status_code=403)
+                logger.warning(
+                    f"Twilio WhatsApp webhook rejected: invalid signature from "
+                    f"{request.client.host if request.client else 'unknown'}"
+                )
+                return FR(status_code=403)
 
             if not getattr(self, "twilio_whatsapp_chat", None):
-                return Response("Online", media_type="text/xml")
+                return FR(content="Online", media_type="text/xml")
 
             twiml = await self.twilio_whatsapp_chat.handle_webhook(form_data)
-            return Response(content=twiml, media_type="text/xml")
+            return FR(content=twiml, media_type="text/xml")
 
+        # ── Audio file serving ────────────────────────────────────────
         @app.get("/audio/{filename}")
         async def serve_audio(filename: str):
-            """Serve generated audio files (ElevenLabs TTS) for Twilio <Play>."""
             from fastapi.responses import FileResponse
             from pathlib import Path
-            import re
 
-            # Security: only allow alphanumeric filenames with .mp3 extension
             if not re.match(r'^[a-f0-9]+\.mp3$', filename):
                 return self.JSONResponse({"error": "Invalid filename"}, status_code=400)
 
@@ -257,59 +427,58 @@ class Dashboard:
 
             return FileResponse(filepath, media_type="audio/mpeg")
 
+        # ── Twilio Voice webhooks ─────────────────────────────────────
         @app.post("/twilio/voice")
         async def twilio_voice_webhook(request: Request):
-            """Handle incoming Twilio Voice call — validates Twilio signature."""
-            from fastapi import Response
             form_data = dict(await request.form())
-
             base = getattr(self, '_base_url', '')
             url = f"{base}/twilio/voice" if base else str(request.url)
             sig = request.headers.get("X-Twilio-Signature", "")
             if not self._validate_twilio_signature(url, form_data, sig):
-                logger.warning(f"Twilio Voice webhook rejected: invalid signature from {request.client.host if request.client else 'unknown'}")
-                return Response(status_code=403)
+                logger.warning(
+                    f"Twilio Voice webhook rejected: invalid signature from "
+                    f"{request.client.host if request.client else 'unknown'}"
+                )
+                return FR(status_code=403)
 
             if not getattr(self, "twilio_voice_chat", None):
-                return Response("Online", media_type="text/xml")
+                return FR(content="Online", media_type="text/xml")
 
             twiml = await self.twilio_voice_chat.handle_incoming_call(form_data)
-            return Response(twiml, media_type="text/xml")
+            return FR(content=twiml, media_type="text/xml")
 
         @app.post("/twilio/voice/gather")
         async def twilio_voice_gather_webhook(request: Request):
-            """Handle transcribed speech from Twilio Gather — validates Twilio signature."""
-            from fastapi import Response
             form_data = dict(await request.form())
-
             base = getattr(self, '_base_url', '')
             url = f"{base}/twilio/voice/gather" if base else str(request.url)
             sig = request.headers.get("X-Twilio-Signature", "")
             if not self._validate_twilio_signature(url, form_data, sig):
-                logger.warning(f"Twilio Voice/gather webhook rejected: invalid signature from {request.client.host if request.client else 'unknown'}")
-                return Response(status_code=403)
+                logger.warning(
+                    f"Twilio Voice/gather webhook rejected: invalid signature from "
+                    f"{request.client.host if request.client else 'unknown'}"
+                )
+                return FR(status_code=403)
 
             if not getattr(self, "twilio_voice_chat", None):
-                return Response("Online", media_type="text/xml")
+                return FR(content="Online", media_type="text/xml")
 
             twiml = await self.twilio_voice_chat.handle_gather(form_data)
-            return Response(twiml, media_type="text/xml")
+            return FR(content=twiml, media_type="text/xml")
 
+        # ── LinkedIn OAuth callback ────────────────────────────────────
         @app.get("/linkedin/callback")
         async def linkedin_oauth_callback(request: Request):
-            """Handle LinkedIn OAuth 2.0 callback.
-
-            LinkedIn redirects here after the user authorizes Nova.
-            Exchanges the code for an access token + person URN, then
-            writes both to .env so Nova can post on the next restart.
-            """
+            """Handle LinkedIn OAuth 2.0 callback."""
             import os as _os
             import aiohttp as _aiohttp
             from pathlib import Path as _Path
             from fastapi.responses import HTMLResponse as _HTML
 
             code = request.query_params.get("code", "")
-            error = request.query_params.get("error_description", request.query_params.get("error", ""))
+            error = request.query_params.get(
+                "error_description", request.query_params.get("error", "")
+            )
 
             if error:
                 return _HTML(f"<h2>LinkedIn auth failed</h2><p>{error}</p>")
@@ -328,7 +497,6 @@ class Dashboard:
                 )
 
             try:
-                # Exchange authorization code for access token
                 async with _aiohttp.ClientSession() as session:
                     async with session.post(
                         "https://www.linkedin.com/oauth/v2/accessToken",
@@ -349,10 +517,6 @@ class Dashboard:
                     return _HTML(f"<h2>Token exchange failed</h2><pre>{token_data}</pre>")
 
                 expires_days = token_data.get("expires_in", 0) // 86400
-
-                # Try to fetch person ID.
-                # If openid scope granted → /v2/userinfo (sub field)
-                # Otherwise try /v2/me?projection=(id) (may 403 with w_member_social only)
                 env_path = _Path(__file__).parent.parent.parent / ".env"
                 person_id = ""
                 granted_scope = token_data.get("scope", "")
@@ -405,8 +569,6 @@ class Dashboard:
 <pre>sudo systemctl restart digital-twin</pre>
 </body></html>""")
                 else:
-                    # /v2/me not permitted with w_member_social — save token,
-                    # user must set LINKEDIN_PERSON_URN manually once
                     self._update_env_keys(env_path, {"LINKEDIN_ACCESS_TOKEN": access_token})
                     logger.info("LinkedIn token saved; person URN needs manual setup")
                     return _HTML(f"""<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:540px;margin:60px auto">
@@ -427,12 +589,12 @@ sudo systemctl restart digital-twin</pre>
                 logger.error(f"LinkedIn OAuth callback error: {e}", exc_info=True)
                 return _HTML(f"<h2>Error during LinkedIn authorization</h2><p>{e}</p>")
 
-        # Run server
+        # ── Run server ────────────────────────────────────────────────
         config = self.uvicorn.Config(
             app,
             host=self.host,
             port=self.port,
-            log_level="info"
+            log_level="info",
         )
         server = self.uvicorn.Server(config)
 
@@ -442,18 +604,521 @@ sudo systemctl restart digital-twin</pre>
         logger.info(f"Twilio Voice webhook: http://{self.host}:{self.port}/twilio/voice")
         await server.serve()
 
+    # ── HTML pages ─────────────────────────────────────────────────────
+
+    def _get_login_html(self, error: str = "") -> str:
+        """Render the login page."""
+        bot_name = os.getenv("BOT_NAME", "Nova")
+        error_html = (
+            f'<div class="error-msg">{error}</div>' if error else ""
+        )
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>{bot_name} — Sign In</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }}
+    .login-card {{
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 40px;
+      width: 360px;
+    }}
+    .logo {{
+      text-align: center;
+      margin-bottom: 28px;
+    }}
+    .logo-icon {{ font-size: 2.5em; }}
+    .logo-name {{ font-size: 1.4em; font-weight: 700; color: #4ade80; margin-top: 8px; }}
+    .logo-sub {{ font-size: 0.85em; color: #666; margin-top: 4px; }}
+    label {{
+      display: block;
+      font-size: 0.85em;
+      color: #888;
+      margin-bottom: 6px;
+      margin-top: 16px;
+    }}
+    input {{
+      width: 100%;
+      padding: 10px 14px;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #e0e0e0;
+      font-size: 0.95em;
+      outline: none;
+      transition: border-color 0.2s;
+    }}
+    input:focus {{ border-color: #4ade80; }}
+    .btn {{
+      width: 100%;
+      padding: 12px;
+      background: #4ade80;
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      font-size: 1em;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 24px;
+      transition: background 0.2s;
+    }}
+    .btn:hover {{ background: #22c55e; }}
+    .error-msg {{
+      background: #3f1515;
+      border: 1px solid #7f2929;
+      color: #f87171;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 0.9em;
+      margin-top: 16px;
+    }}
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <div class="logo-name">{bot_name}</div>
+      <div class="logo-sub">Dashboard Access</div>
+    </div>
+    <form method="POST" action="/login">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      {error_html}
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>"""
+
+    def _get_dashboard_html(self) -> str:
+        """Render the main dashboard with chat window and stats."""
+        bot_name = os.getenv("BOT_NAME", "Nova")
+        show_logout = "inline-block" if self._is_auth_required() else "none"
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>{bot_name} Dashboard</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }}
+
+    /* ── Top bar ─────────────────────── */
+    .topbar {{
+      background: #1a1a1a;
+      border-bottom: 1px solid #2a2a2a;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }}
+    .brand {{ display: flex; align-items: center; gap: 10px; }}
+    .brand-icon {{ font-size: 1.4em; }}
+    .brand-name {{ font-size: 1.1em; font-weight: 700; color: #4ade80; }}
+    .uptime-badge {{
+      background: #1a3a2a;
+      border: 1px solid #2a5a3a;
+      color: #4ade80;
+      font-size: 0.75em;
+      padding: 3px 10px;
+      border-radius: 20px;
+    }}
+    .topbar-right {{ display: flex; align-items: center; gap: 14px; }}
+    .status-pill {{
+      display: flex; align-items: center; gap: 6px;
+      font-size: 0.85em; color: #888;
+    }}
+    .dot {{
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #4ade80;
+      box-shadow: 0 0 6px #4ade80;
+      animation: pulse 2s infinite;
+    }}
+    @keyframes pulse {{
+      0%, 100% {{ opacity: 1; }}
+      50% {{ opacity: 0.5; }}
+    }}
+    .logout-btn {{
+      color: #888;
+      text-decoration: none;
+      font-size: 0.85em;
+      padding: 6px 12px;
+      border: 1px solid #333;
+      border-radius: 6px;
+      transition: all 0.2s;
+      display: {show_logout};
+    }}
+    .logout-btn:hover {{ color: #e0e0e0; border-color: #555; }}
+
+    /* ── Stats row ───────────────────── */
+    .stats-row {{
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      padding: 14px 20px;
+      background: #111;
+      border-bottom: 1px solid #2a2a2a;
+      flex-shrink: 0;
+    }}
+    .stat-card {{
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 12px 16px;
+      border-left: 3px solid #4ade80;
+    }}
+    .stat-val {{
+      font-size: 1.6em;
+      font-weight: 700;
+      color: #e0e0e0;
+      line-height: 1;
+    }}
+    .stat-lbl {{
+      font-size: 0.75em;
+      color: #666;
+      margin-top: 4px;
+    }}
+
+    /* ── Main content ────────────────── */
+    .main {{
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      gap: 0;
+    }}
+
+    /* ── Chat column ─────────────────── */
+    .chat-col {{
+      flex: 0 0 60%;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #2a2a2a;
+      overflow: hidden;
+    }}
+    .col-header {{
+      padding: 12px 16px;
+      background: #1a1a1a;
+      border-bottom: 1px solid #2a2a2a;
+      font-size: 0.9em;
+      font-weight: 600;
+      color: #ccc;
+      flex-shrink: 0;
+    }}
+    .chat-messages {{
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }}
+    .chat-msg {{
+      display: flex;
+      flex-direction: column;
+      max-width: 80%;
+    }}
+    .chat-msg.nova {{ align-self: flex-start; }}
+    .chat-msg.owner {{ align-self: flex-end; align-items: flex-end; }}
+    .chat-msg.system {{ align-self: center; }}
+    .bubble {{
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 0.92em;
+      line-height: 1.5;
+      word-break: break-word;
+    }}
+    .nova .bubble {{
+      background: #1e2a1e;
+      border: 1px solid #2a3a2a;
+      color: #d0f0d0;
+      border-bottom-left-radius: 4px;
+    }}
+    .owner .bubble {{
+      background: #1e2535;
+      border: 1px solid #2a3555;
+      color: #d0e0f0;
+      border-bottom-right-radius: 4px;
+    }}
+    .system .bubble {{
+      background: #2a2a1e;
+      border: 1px solid #3a3a2a;
+      color: #aaa;
+      font-size: 0.85em;
+    }}
+    .msg-time {{
+      font-size: 0.72em;
+      color: #555;
+      margin-top: 4px;
+      padding: 0 4px;
+    }}
+    .chat-input-area {{
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      background: #1a1a1a;
+      border-top: 1px solid #2a2a2a;
+      flex-shrink: 0;
+    }}
+    .chat-input-area input {{
+      flex: 1;
+      padding: 10px 14px;
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #e0e0e0;
+      font-size: 0.92em;
+      outline: none;
+      transition: border-color 0.2s;
+    }}
+    .chat-input-area input:focus {{ border-color: #4ade80; }}
+    .send-btn {{
+      padding: 10px 18px;
+      background: #4ade80;
+      color: #000;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.92em;
+      transition: background 0.2s;
+    }}
+    .send-btn:hover {{ background: #22c55e; }}
+    .send-btn:disabled {{ background: #333; color: #666; cursor: not-allowed; }}
+
+    /* ── Logs column ─────────────────── */
+    .logs-col {{
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }}
+    .logs-area {{
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.82em;
+    }}
+    .log-entry {{
+      padding: 4px 6px;
+      border-bottom: 1px solid #1a1a1a;
+      line-height: 1.4;
+    }}
+    .log-entry:hover {{ background: #1a1a1a; }}
+    .log-time {{ color: #555; }}
+    .log-info {{ color: #60a5fa; }}
+    .log-warning {{ color: #fbbf24; }}
+    .log-error {{ color: #f87171; }}
+    .log-success {{ color: #4ade80; }}
+
+    /* ── Scrollbars ──────────────────── */
+    ::-webkit-scrollbar {{ width: 6px; height: 6px; }}
+    ::-webkit-scrollbar-track {{ background: #111; }}
+    ::-webkit-scrollbar-thumb {{ background: #333; border-radius: 3px; }}
+    ::-webkit-scrollbar-thumb:hover {{ background: #444; }}
+  </style>
+</head>
+<body>
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="brand">
+      <span class="brand-icon">⚡</span>
+      <span class="brand-name">{bot_name}</span>
+      <span class="uptime-badge" id="uptime-badge">starting…</span>
+    </div>
+    <div class="topbar-right">
+      <div class="status-pill">
+        <span class="dot"></span>
+        <span>Online</span>
+      </div>
+      <a href="/logout" class="logout-btn">Sign out</a>
+    </div>
+  </div>
+
+  <!-- Stats row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-val" id="stat-contacts">—</div>
+      <div class="stat-lbl">Contacts</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="stat-tasks">—</div>
+      <div class="stat-lbl">Tasks Pending</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="stat-messages">—</div>
+      <div class="stat-lbl">Messages Today</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" id="stat-uptime">—</div>
+      <div class="stat-lbl">Uptime</div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="main">
+
+    <!-- Chat column -->
+    <div class="chat-col">
+      <div class="col-header">💬 Chat with {bot_name}</div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-input-area">
+        <input id="chat-input" type="text"
+               placeholder="Message {bot_name}…"
+               autocomplete="off" />
+        <button class="send-btn" id="send-btn" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+
+    <!-- Logs column -->
+    <div class="logs-col">
+      <div class="col-header">📋 Live Logs</div>
+      <div class="logs-area" id="logs-area"></div>
+    </div>
+
+  </div>
+
+  <script>
+    // ── WebSocket chat ─────────────────────────────────────────────
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let ws = null;
+
+    function connectWS() {{
+      ws = new WebSocket(`${{wsProto}}//${{location.host}}/ws/chat`);
+
+      ws.onopen = () => {{
+        document.getElementById('send-btn').disabled = false;
+      }};
+
+      ws.onmessage = (event) => {{
+        const data = JSON.parse(event.data);
+        appendMessage(data.sender, data.text, data.timestamp);
+      }};
+
+      ws.onclose = () => {{
+        document.getElementById('send-btn').disabled = true;
+        appendMessage('system', 'Connection lost — reconnecting in 5s…', new Date().toISOString());
+        setTimeout(connectWS, 5000);
+      }};
+
+      ws.onerror = () => ws.close();
+    }}
+
+    connectWS();
+
+    function sendMessage() {{
+      const input = document.getElementById('chat-input');
+      const msg = input.value.trim();
+      if (!msg || !ws || ws.readyState !== WebSocket.OPEN) return;
+      appendMessage('owner', msg, new Date().toISOString());
+      ws.send(msg);
+      input.value = '';
+    }}
+
+    document.getElementById('chat-input').addEventListener('keypress', (e) => {{
+      if (e.key === 'Enter') sendMessage();
+    }});
+
+    function appendMessage(sender, text, timestamp) {{
+      const div = document.createElement('div');
+      div.className = `chat-msg ${{sender}}`;
+      const time = new Date(timestamp).toLocaleTimeString();
+      div.innerHTML = `<div class="bubble">${{escHtml(text)}}</div>
+                       <div class="msg-time">${{time}}</div>`;
+      const container = document.getElementById('chat-messages');
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }}
+
+    function escHtml(text) {{
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\\n/g, '<br>');
+    }}
+
+    // ── Stats polling ──────────────────────────────────────────────
+    async function fetchStats() {{
+      try {{
+        const res = await fetch('/api/stats');
+        if (!res.ok) return;
+        const d = await res.json();
+        document.getElementById('stat-contacts').textContent  = d.contacts   ?? '—';
+        document.getElementById('stat-tasks').textContent     = d.tasks_pending ?? '—';
+        document.getElementById('stat-messages').textContent  = d.messages_today ?? '—';
+
+        const h = Math.floor(d.uptime_seconds / 3600);
+        const m = Math.floor((d.uptime_seconds % 3600) / 60);
+        const uptime = h >= 24
+          ? `${{Math.floor(h/24)}}d ${{h%24}}h ${{m}}m`
+          : `${{h}}h ${{m}}m`;
+        document.getElementById('stat-uptime').textContent = uptime;
+        document.getElementById('uptime-badge').textContent = uptime;
+      }} catch(e) {{}}
+    }}
+
+    // ── Logs polling ───────────────────────────────────────────────
+    async function fetchLogs() {{
+      try {{
+        const res = await fetch('/api/logs');
+        if (!res.ok) return;
+        const data = await res.json();
+        const area = document.getElementById('logs-area');
+        const atBottom = area.scrollHeight - area.scrollTop <= area.clientHeight + 40;
+        area.innerHTML = data.logs.map(log => {{
+          const time = new Date(log.timestamp).toLocaleTimeString();
+          const cls = `log-${{log.level}}`;
+          return `<div class="log-entry"><span class="log-time">${{time}} </span>`
+               + `<span class="${{cls}}">${{escHtml(log.message)}}</span></div>`;
+        }}).join('');
+        if (atBottom) area.scrollTop = area.scrollHeight;
+      }} catch(e) {{}}
+    }}
+
+    fetchStats();
+    fetchLogs();
+    setInterval(fetchStats, 5000);
+    setInterval(fetchLogs, 2000);
+  </script>
+</body>
+</html>"""
+
     @staticmethod
     def _update_env_keys(env_path, updates: dict):
-        """Write or update key=value pairs in a .env file.
-
-        Existing keys are updated in-place; new keys are appended.
-        Does not touch any other lines.
-        """
+        """Write or update key=value pairs in a .env file in-place."""
         from pathlib import Path as _Path
         env_path = _Path(env_path)
         existing_lines = env_path.read_text().splitlines() if env_path.exists() else []
 
-        # Build a map of existing key → line index
         key_to_idx = {}
         for i, line in enumerate(existing_lines):
             stripped = line.strip()
@@ -461,7 +1126,6 @@ sudo systemctl restart digital-twin</pre>
                 k = stripped.split("=", 1)[0].strip()
                 key_to_idx[k] = i
 
-        # Update existing lines or append new ones
         for key, value in updates.items():
             new_line = f"{key}={value}"
             if key in key_to_idx:
@@ -471,185 +1135,3 @@ sudo systemctl restart digital-twin</pre>
 
         env_path.write_text("\n".join(existing_lines) + "\n")
         logger.info(f"Updated .env: {list(updates.keys())}")
-
-    def _get_dashboard_html(self) -> str:
-        """Generate dashboard HTML.
-
-        Returns:
-            HTML string
-        """
-        return """<!DOCTYPE html>
-<html>
-<head>
-    <title>Autonomous Agent Dashboard</title>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #1e1e1e;
-            color: #d4d4d4;
-            padding: 20px;
-        }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .header {
-            background: #2d2d2d;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-        h1 { color: #4CAF50; margin-bottom: 10px; }
-        .status {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        .stat-card {
-            background: #2d2d2d;
-            padding: 15px;
-            border-radius: 8px;
-            border-left: 4px solid #4CAF50;
-        }
-        .stat-label { color: #888; font-size: 0.9em; margin-bottom: 5px; }
-        .stat-value { font-size: 1.5em; font-weight: bold; }
-        .progress-bar {
-            width: 100%;
-            height: 30px;
-            background: #2d2d2d;
-            border-radius: 15px;
-            overflow: hidden;
-            margin: 20px 0;
-        }
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #4CAF50, #45a049);
-            transition: width 0.3s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
-        }
-        .logs {
-            background: #000;
-            padding: 15px;
-            border-radius: 8px;
-            height: 400px;
-            overflow-y: auto;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9em;
-        }
-        .log-entry {
-            padding: 5px 0;
-            border-bottom: 1px solid #333;
-        }
-        .log-time { color: #888; }
-        .log-info { color: #2196F3; }
-        .log-success { color: #4CAF50; }
-        .log-warning { color: #ff9800; }
-        .log-error { color: #f44336; }
-        .refresh-btn {
-            background: #4CAF50;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 1em;
-        }
-        .refresh-btn:hover { background: #45a049; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🤖 Autonomous Agent Dashboard</h1>
-            <p>Real-time monitoring and control</p>
-        </div>
-
-        <div class="status" id="status">
-            <div class="stat-card">
-                <div class="stat-label">State</div>
-                <div class="stat-value" id="state">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Current Phase</div>
-                <div class="stat-value" id="phase">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Progress</div>
-                <div class="stat-value" id="progress">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Uptime</div>
-                <div class="stat-value" id="uptime">-</div>
-            </div>
-        </div>
-
-        <div class="progress-bar">
-            <div class="progress-fill" id="progress-bar">0%</div>
-        </div>
-
-        <button class="refresh-btn" onclick="fetchData()">Refresh</button>
-
-        <h2 style="margin: 20px 0 10px 0;">📝 Recent Logs</h2>
-        <div class="logs" id="logs"></div>
-    </div>
-
-    <script>
-        async function fetchData() {
-            try {
-                // Fetch status
-                const statusRes = await fetch('/api/status');
-                const status = await statusRes.json();
-
-                document.getElementById('state').textContent = status.state || 'N/A';
-                document.getElementById('phase').textContent = status.phase || 'N/A';
-                document.getElementById('progress').textContent = status.progress || '0/0';
-
-                // Calculate uptime
-                const uptimeMins = Math.floor(status.uptime_seconds / 60);
-                const uptimeHours = Math.floor(uptimeMins / 60);
-                document.getElementById('uptime').textContent =
-                    `${uptimeHours}h ${uptimeMins % 60}m`;
-
-                // Update progress bar
-                const [current, total] = (status.progress || '0/0').split('/').map(Number);
-                const percent = total > 0 ? Math.round((current / total) * 100) : 0;
-                const progressBar = document.getElementById('progress-bar');
-                progressBar.style.width = percent + '%';
-                progressBar.textContent = percent + '%';
-
-                // Fetch logs
-                const logsRes = await fetch('/api/logs');
-                const logsData = await logsRes.json();
-
-                const logsDiv = document.getElementById('logs');
-                logsDiv.innerHTML = logsData.logs.map(log => {
-                    const levelClass = 'log-' + log.level;
-                    const time = new Date(log.timestamp).toLocaleTimeString();
-                    return `<div class="log-entry">
-                        <span class="log-time">[${time}]</span>
-                        <span class="${levelClass}">${log.message}</span>
-                    </div>`;
-                }).join('');
-
-                // Scroll to bottom
-                logsDiv.scrollTop = logsDiv.scrollHeight;
-
-            } catch (error) {
-                console.error('Error fetching data:', error);
-            }
-        }
-
-        // Auto-refresh every 2 seconds
-        setInterval(fetchData, 2000);
-
-        // Initial fetch
-        fetchData();
-    </script>
-</body>
-</html>
-"""

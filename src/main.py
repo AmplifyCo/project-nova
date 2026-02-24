@@ -459,6 +459,13 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             if dashboard.enabled:
                 dashboard.set_telegram_chat(telegram_chat)
 
+            # Wire conversation_manager, task_queue, and brain into dashboard
+            if dashboard.enabled:
+                dashboard.set_conversation_manager(conversation_manager, config.telegram_chat_id)
+                if 'task_queue' in locals():
+                    dashboard.set_task_queue(task_queue)
+                dashboard.set_brain(digital_brain)
+
             logger.info("💬 Telegram chat interface initialized (channel-agnostic architecture)")
             if twilio_whatsapp_channel and twilio_whatsapp_channel.enabled:
                 logger.info("💬 Twilio WhatsApp chat interface initialized")
