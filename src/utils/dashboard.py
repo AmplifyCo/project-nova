@@ -154,6 +154,10 @@ class Dashboard:
         self.twilio_whatsapp_chat = twilio_whatsapp_chat
         logger.info("Twilio WhatsApp chat handler registered with dashboard")
 
+    def set_meta_whatsapp_chat(self, meta_whatsapp_chat):
+        self.meta_whatsapp_chat = meta_whatsapp_chat
+        logger.info("Meta WhatsApp chat handler registered with dashboard")
+
     def set_twilio_voice_chat(self, twilio_voice_chat):
         self.twilio_voice_chat = twilio_voice_chat
         logger.info("Twilio Voice chat handler registered with dashboard")
@@ -412,6 +416,26 @@ class Dashboard:
             twiml = await self.twilio_whatsapp_chat.handle_webhook(form_data)
             return FR(content=twiml, media_type="text/xml")
 
+        # ── Meta Cloud API WhatsApp webhooks ──────────────────────────
+        @app.get("/whatsapp/webhook")
+        async def meta_whatsapp_verify(request: Request):
+            """Meta webhook verification handshake."""
+            if not getattr(self, "meta_whatsapp_chat", None):
+                return self.JSONResponse({"error": "Not configured"}, status_code=404)
+            challenge = self.meta_whatsapp_chat.handle_verification(dict(request.query_params))
+            if challenge is None:
+                return self.JSONResponse({"error": "Verification failed"}, status_code=403)
+            return FR(content=challenge, media_type="text/plain")
+
+        @app.post("/whatsapp/webhook")
+        async def meta_whatsapp_webhook(request: Request):
+            """Meta Cloud API incoming message webhook."""
+            if not getattr(self, "meta_whatsapp_chat", None):
+                return self.JSONResponse({"ok": True})  # 200 so Meta doesn't retry
+            body = await request.json()
+            await self.meta_whatsapp_chat.handle_webhook(body)
+            return self.JSONResponse({"ok": True})
+
         # ── Audio file serving ────────────────────────────────────────
         @app.get("/audio/{filename}")
         async def serve_audio(filename: str):
@@ -602,6 +626,7 @@ sudo systemctl restart digital-twin</pre>
         logger.info(f"Telegram webhook endpoint: http://{self.host}:{self.port}/telegram/webhook")
         logger.info(f"Twilio WhatsApp webhook: http://{self.host}:{self.port}/twilio/whatsapp")
         logger.info(f"Twilio Voice webhook: http://{self.host}:{self.port}/twilio/voice")
+        logger.info(f"Meta WhatsApp webhook: http://{self.host}:{self.port}/whatsapp/webhook")
         await server.serve()
 
     # ── HTML pages ─────────────────────────────────────────────────────

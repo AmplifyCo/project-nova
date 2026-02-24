@@ -34,6 +34,7 @@ from src.integrations.model_router import ModelRouter
 from src.channels.telegram_channel import TelegramChannel
 from src.channels.twilio_whatsapp_channel import TwilioWhatsAppChannel
 from src.channels.twilio_voice_channel import TwilioVoiceChannel
+from src.channels.meta_whatsapp_channel import MetaWhatsAppChannel
 from src.utils.telegram_notifier import TelegramNotifier, TelegramCommandHandler
 from src.utils.dashboard import Dashboard
 from src.utils.auto_updater import AutoUpdater
@@ -437,6 +438,20 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
                 if dashboard.enabled:
                     dashboard.set_twilio_whatsapp_chat(twilio_whatsapp_channel)
 
+            # Initialize Meta Cloud API WhatsApp Channel (blue ticks + lower latency)
+            meta_whatsapp_channel = None
+            if config.whatsapp_api_token and config.whatsapp_phone_id and config.whatsapp_verify_token:
+                logger.info("Initializing Meta WhatsApp channel (Cloud API)...")
+                meta_whatsapp_channel = MetaWhatsAppChannel(
+                    api_token=config.whatsapp_api_token,
+                    phone_number_id=config.whatsapp_phone_id,
+                    verify_token=config.whatsapp_verify_token,
+                    conversation_manager=conversation_manager,
+                    allowed_numbers=config.whatsapp_allowed_numbers,
+                )
+                if dashboard.enabled:
+                    dashboard.set_meta_whatsapp_chat(meta_whatsapp_channel)
+
             # Initialize Twilio Voice Channel
             twilio_voice_channel = None
             if config.twilio_account_sid and config.twilio_auth_token and config.twilio_phone_number:
@@ -470,6 +485,8 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             logger.info("💬 Telegram chat interface initialized (channel-agnostic architecture)")
             if twilio_whatsapp_channel and twilio_whatsapp_channel.enabled:
                 logger.info("💬 Twilio WhatsApp chat interface initialized")
+            if meta_whatsapp_channel and meta_whatsapp_channel.enabled:
+                logger.info("💬 Meta WhatsApp chat interface initialized (blue ticks enabled)")
             if twilio_voice_channel and twilio_voice_channel.enabled:
                 logger.info("📞 Twilio Voice interface initialized")
 
