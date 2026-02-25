@@ -361,6 +361,145 @@ sudo systemctl restart digital-twin
 
 ---
 
+## 🍎 Deployment (Mac / macOS)
+
+No code changes are needed — Nova runs natively on macOS (Apple Silicon and Intel).
+
+### Install
+
+```bash
+git clone https://github.com/AmplifyCo/project-nova.git
+cd project-nova
+
+python3 -m venv venv
+source venv/bin/activate
+
+pip install -r requirements.txt
+
+# Browser support — no extra system packages needed on Mac
+playwright install chromium
+```
+
+### Configure
+
+```bash
+cp .env.example .env
+nano .env          # fill in your API keys
+```
+
+### Run (foreground — for testing)
+
+```bash
+source venv/bin/activate
+python src/main.py
+```
+
+### Run as a background service (launchd)
+
+`launchd` is the Mac equivalent of `systemd`. It keeps Nova alive across reboots automatically.
+
+**Step 1 — Create a startup wrapper script**
+
+launchd doesn't source `.env` files, so use a small shell script that loads it first:
+
+```bash
+cat > ~/project-nova/start_nova.sh << 'EOF'
+#!/bin/bash
+set -a
+source "$(dirname "$0")/.env"
+set +a
+exec "$(dirname "$0")/venv/bin/python" "$(dirname "$0")/src/main.py"
+EOF
+
+chmod +x ~/project-nova/start_nova.sh
+```
+
+**Step 2 — Create the launchd plist**
+
+Replace `YOUR_USERNAME` with the output of `whoami` and adjust the path if you cloned elsewhere:
+
+```bash
+mkdir -p ~/project-nova/logs
+
+cat > ~/Library/LaunchAgents/com.nova.digitalclone.plist << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nova.digitalclone</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOUR_USERNAME/project-nova/start_nova.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOUR_USERNAME/project-nova</string>
+
+    <!-- Start automatically on login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if it crashes -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Wait 10s before restarting after a crash -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/project-nova/logs/nova.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/project-nova/logs/nova_error.log</string>
+</dict>
+</plist>
+EOF
+```
+
+**Step 3 — Load the service**
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.nova.digitalclone.plist
+```
+
+Nova is now running and will restart automatically on login or if it crashes.
+
+### Mac service cheat sheet
+
+| Task | Mac (launchctl) | Linux (systemctl) |
+|---|---|---|
+| **Start** | `launchctl load ~/Library/LaunchAgents/com.nova.digitalclone.plist` | `sudo systemctl start digital-twin` |
+| **Stop** | `launchctl unload ~/Library/LaunchAgents/com.nova.digitalclone.plist` | `sudo systemctl stop digital-twin` |
+| **Restart** | `launchctl kickstart -k gui/$(id -u)/com.nova.digitalclone` | `sudo systemctl restart digital-twin` |
+| **Status** | `launchctl list \| grep nova` | `sudo systemctl status digital-twin` |
+| **Enable on boot** | `RunAtLoad: true` in plist (already set above) | `sudo systemctl enable digital-twin` |
+| **Logs (live)** | `tail -f ~/project-nova/logs/nova.log` | `journalctl -u digital-twin -f` |
+
+### Update on Mac
+
+```bash
+cd ~/project-nova
+git pull
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Restart Nova
+launchctl kickstart -k gui/$(id -u)/com.nova.digitalclone
+```
+
+### Uninstall the service
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.nova.digitalclone.plist
+rm ~/Library/LaunchAgents/com.nova.digitalclone.plist
+```
+
+---
+
 ## 🧰 Tech Stack
 
 | Layer | Technology |
