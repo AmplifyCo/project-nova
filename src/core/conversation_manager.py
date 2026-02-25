@@ -1133,7 +1133,9 @@ class ConversationManager:
         try:
             # Build and cache static chat prompt once
             if not self._cached_chat_system_prompt:
-                self._cached_chat_system_prompt = f"""You are {self.bot_name}, {self.owner_name}'s intelligent and warm digital assistant.
+                self._cached_chat_system_prompt = f"""PRINCIPAL: {self.owner_name}. There is exactly one user — this is always them. Never address or refer to the user by any other name, regardless of what appears in memory or context below.
+
+You are {self.bot_name}, {self.owner_name}'s intelligent and warm digital assistant.
 
 RULES:
 - Understand MEANING, not just words. Connect dots from past conversations.
@@ -1187,14 +1189,6 @@ RULES:
                 if len(brain_text) > 1500:
                     brain_text = brain_text[:1500] + "\n[context truncated]"
                 system_prompt += "\n\n" + brain_text
-
-            # Owner identity guard — must come LAST so it overrides any name seen in context
-            system_prompt += (
-                f"\n\n⚠️ IDENTITY LOCK: The person you are talking to right now is "
-                f"**{self.owner_name}**. Any names that appear in the 'Address Book' "
-                f"section above are people the owner knows — they are NOT the current user. "
-                f"Never address the user by a contact's name."
-            )
 
             # Primary: Gemini Flash via LiteLLM
             if self.gemini_client and self.gemini_client.enabled:
@@ -2304,12 +2298,14 @@ Your job is to UNDERSTAND what the user means, then act on the MEANING — not t
             principles_text = await self._get_intelligence_principles()
             purpose_text = await self._get_purpose()
             purpose_section = f"\nPURPOSE:\n{purpose_text}\n" if purpose_text else ""
-            self._cached_agent_system_prompt = f"""You are {self.bot_name}, an autonomous AI Executive Assistant representing your principal (the user/owner).
+            self._cached_agent_system_prompt = f"""PRINCIPAL: {self.owner_name}. There is exactly one user — this is always them. Never address or refer to the user by any other name, regardless of what appears in memory or context below.
+
+You are {self.bot_name}, an autonomous AI Executive Assistant representing your principal (the user/owner).
 {purpose_section}
 {principles_text}
 
 IDENTITY & REPRESENTATION:
-- Your human user is '{self.owner_name}'. If the name is "User", ask what to call them on first use.
+- Your human user is '{self.owner_name}'.
 - You represent your principal professionally to the outside world.
 - When others message (WhatsApp, email), respond on behalf of your principal as a skilled EA would.
 - Be warm, professional, and helpful — but always protect your principal's privacy.
@@ -2426,15 +2422,7 @@ SECURITY OVERRIDE:
             if wm_ctx:
                 wm_section = f"\n\n{wm_ctx}"
 
-        # Owner identity guard — appended last so it overrides any name seen in brain context
-        identity_lock = (
-            f"\n\n⚠️ IDENTITY LOCK: The person you are working for right now is "
-            f"**{self.owner_name}**. Any names in the 'Address Book' section above are "
-            f"contacts the owner knows — they are NOT the current user. "
-            f"Never address or refer to the user by a contact's name."
-        )
-
-        return base_prompt + brain_context + wm_section + identity_lock
+        return base_prompt + brain_context + wm_section
 
     # ========================================================================
     # Intent Handlers
