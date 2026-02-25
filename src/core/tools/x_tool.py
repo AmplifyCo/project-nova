@@ -488,54 +488,26 @@ class XTool(BaseTool):
                 )
             )
 
-        def _do_post_community():
+        def _do_post():
             oauth = self._get_oauth1_session()
             return oauth.post(
                 f"{self.api_base}/tweets",
-                json={"text": content, "community_id": resolved_id}
-            )
-
-        def _do_post_timeline():
-            oauth = self._get_oauth1_session()
-            return oauth.post(
-                f"{self.api_base}/tweets",
-                json={"text": content}
+                json={"text": content, "community_id": resolved_id, "share_with_followers": True}
             )
 
         loop = asyncio.get_event_loop()
-        resp = await loop.run_in_executor(None, _do_post_community)
+        resp = await loop.run_in_executor(None, _do_post)
 
         if resp.status_code not in (200, 201):
             return self._handle_error(resp)
 
         data = resp.json()
-        community_tweet_id = data.get("data", {}).get("id", "unknown")
-        logger.info(f"Tweet posted to community {resolved_id}: {community_tweet_id}")
-
-        # Also post to regular timeline so followers see it
-        timeline_tweet_id = None
-        try:
-            resp2 = await loop.run_in_executor(None, _do_post_timeline)
-            if resp2.status_code in (200, 201):
-                timeline_tweet_id = resp2.json().get("data", {}).get("id", "unknown")
-                logger.info(f"Same content also posted to timeline: {timeline_tweet_id}")
-            else:
-                logger.warning(f"Timeline post failed ({resp2.status_code}), community post succeeded")
-        except Exception as e:
-            logger.warning(f"Timeline post failed: {e}, community post succeeded")
-
-        output = f"Posted to X Community ({community_id}). Community Tweet ID: {community_tweet_id}"
-        if timeline_tweet_id:
-            output += f"\nAlso posted to your timeline for followers. Timeline Tweet ID: {timeline_tweet_id}"
-
+        tweet_id = data.get("data", {}).get("id", "unknown")
+        logger.info(f"Tweet posted to community {resolved_id} (shared with followers): {tweet_id}")
         return ToolResult(
             success=True,
-            output=output,
-            metadata={
-                "community_tweet_id": community_tweet_id,
-                "timeline_tweet_id": timeline_tweet_id,
-                "community_id": resolved_id
-            }
+            output=f"Posted to X Community ({community_id}) and shared with followers. Tweet ID: {tweet_id}",
+            metadata={"tweet_id": tweet_id, "community_id": resolved_id}
         )
 
     async def _resolve_community_id(self, name_or_id: str) -> Optional[str]:
