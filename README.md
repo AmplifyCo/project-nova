@@ -1,4 +1,4 @@
-# Nova — the AutoBot
+# Nova 🤖 — the AutoBot
 
 > A self-hosted personal AI agent that learns, remembers, and acts on your behalf.
 
