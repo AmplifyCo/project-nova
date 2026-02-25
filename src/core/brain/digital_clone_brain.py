@@ -534,15 +534,34 @@ Assistant ({model_used}): {assistant_response}"""
         except Exception as e:
             logger.debug(f"Could not search preferences: {e}")
 
-        # --- COLLECTIVE: Relevant contacts (always included) ---
-        try:
-            contacts = await self.contacts.search(task, n_results=2)
-            if contacts:
-                context_parts.append("\n## Relevant Contacts:")
-                for c in contacts:
-                    context_parts.append(f"- {c['text'][:200]}")
-        except Exception as e:
-            logger.debug(f"Could not search contacts: {e}")
+        # --- COLLECTIVE: Relevant contacts (only when task is communication-related) ---
+        # Contacts are only useful when the user is asking about a specific person or
+        # wants to communicate with someone. Including them for every message risks the
+        # LLM confusing a contact's name with the current user's name.
+        _CONTACT_KEYWORDS = {
+            "email", "mail", "send", "write to", "message", "call", "phone",
+            "text", "contact", "meet", "schedule", "invite", "reply", "forward",
+            "introduce", "reach out", "get in touch", "remind", "tell", "ask",
+        }
+        _CONTACT_DISTANCE_THRESHOLD = 0.70  # L2 distance; higher = less similar
+
+        task_lower = task.lower()
+        _needs_contacts = any(kw in task_lower for kw in _CONTACT_KEYWORDS)
+
+        if _needs_contacts:
+            try:
+                contacts = await self.contacts.search(task, n_results=2)
+                # Filter out low-relevance hits (search always returns top-N even if unrelated)
+                relevant = [c for c in contacts if c.get("distance", 1.0) <= _CONTACT_DISTANCE_THRESHOLD]
+                if relevant:
+                    context_parts.append(
+                        "\n## Address Book (people the owner knows — "
+                        "these are NOT the person you are currently talking to):"
+                    )
+                    for c in relevant:
+                        context_parts.append(f"- {c['text'][:200]}")
+            except Exception as e:
+                logger.debug(f"Could not search contacts: {e}")
 
         # --- ISOLATED: Talent-specific memories (only current talent) ---
         if resolved_talent:

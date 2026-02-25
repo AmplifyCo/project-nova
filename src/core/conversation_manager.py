@@ -1188,6 +1188,14 @@ RULES:
                     brain_text = brain_text[:1500] + "\n[context truncated]"
                 system_prompt += "\n\n" + brain_text
 
+            # Owner identity guard — must come LAST so it overrides any name seen in context
+            system_prompt += (
+                f"\n\n⚠️ IDENTITY LOCK: The person you are talking to right now is "
+                f"**{self.owner_name}**. Any names that appear in the 'Address Book' "
+                f"section above are people the owner knows — they are NOT the current user. "
+                f"Never address the user by a contact's name."
+            )
+
             # Primary: Gemini Flash via LiteLLM
             if self.gemini_client and self.gemini_client.enabled:
                 try:
@@ -2418,7 +2426,15 @@ SECURITY OVERRIDE:
             if wm_ctx:
                 wm_section = f"\n\n{wm_ctx}"
 
-        return base_prompt + brain_context + wm_section
+        # Owner identity guard — appended last so it overrides any name seen in brain context
+        identity_lock = (
+            f"\n\n⚠️ IDENTITY LOCK: The person you are working for right now is "
+            f"**{self.owner_name}**. Any names in the 'Address Book' section above are "
+            f"contacts the owner knows — they are NOT the current user. "
+            f"Never address or refer to the user by a contact's name."
+        )
+
+        return base_prompt + brain_context + wm_section + identity_lock
 
     # ========================================================================
     # Intent Handlers
