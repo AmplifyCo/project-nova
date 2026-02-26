@@ -24,8 +24,13 @@ class ReminderTool(BaseTool):
 
     name = "reminder"
     description = (
-        "Set, list, and cancel reminders. "
-        "Reminders fire at the specified time and notify the user via Telegram."
+        "Set, list, and cancel reminders. Two modes:\n"
+        "1. PASSIVE (notify only) — use when no tool action is needed: 'Remind me about John's birthday', "
+        "'Remind me to call mom'. Just sends a notification at the specified time.\n"
+        "2. ACTIVE (execute action) — use when a task must be performed at a future time: "
+        "'Post on LinkedIn at 9 AM', 'Send email tomorrow morning', 'Book restaurant on Mar 28'. "
+        "Set action_goal to the full task description. When the reminder fires, Nova will execute "
+        "that goal using the right tools automatically — do NOT just set a passive reminder for these."
     )
     parameters = {
         "operation": {
@@ -35,11 +40,25 @@ class ReminderTool(BaseTool):
         },
         "message": {
             "type": "string",
-            "description": "Reminder message text (for set_reminder)"
+            "description": "Human-readable reminder label shown in notification (for set_reminder)"
         },
         "remind_at": {
             "type": "string",
             "description": "When to fire. Accepts absolute 'YYYY-MM-DD HH:MM' or relative like '30m', '2h', '1d', '90s', '1h30m' (for set_reminder)"
+        },
+        "action_goal": {
+            "type": "string",
+            "description": (
+                "REQUIRED when the reminder must execute a task (post, send, book, call, etc.). "
+                "Write the full goal as you would pass it to nova_task. "
+                "Example: 'Post the LinkedIn post from linkedin_post.txt using the linkedin tool'. "
+                "Leave empty for passive notify-only reminders."
+            )
+        },
+        "channel": {
+            "type": "string",
+            "description": "Channel to notify and run the action on when it fires: 'telegram' or 'whatsapp'. Default: 'telegram'.",
+            "enum": ["telegram", "whatsapp"]
         },
         "reminder_id": {
             "type": "string",
@@ -73,13 +92,15 @@ class ReminderTool(BaseTool):
         operation: str,
         message: Optional[str] = None,
         remind_at: Optional[str] = None,
+        action_goal: Optional[str] = None,
+        channel: str = "telegram",
         reminder_id: Optional[str] = None,
         **kwargs
     ) -> ToolResult:
         """Execute reminder operation."""
         try:
             if operation == "set_reminder":
-                return self._set_reminder(message, remind_at)
+                return self._set_reminder(message, remind_at, action_goal, channel)
             elif operation == "list_reminders":
                 return self._list_reminders()
             elif operation == "cancel_reminder":
@@ -90,8 +111,14 @@ class ReminderTool(BaseTool):
             logger.error(f"Reminder operation error: {e}", exc_info=True)
             return ToolResult(success=False, error=f"Reminder operation failed: {str(e)}")
 
-    def _set_reminder(self, message: Optional[str], remind_at: Optional[str]) -> ToolResult:
-        """Set a new reminder."""
+    def _set_reminder(
+        self,
+        message: Optional[str],
+        remind_at: Optional[str],
+        action_goal: Optional[str] = None,
+        channel: str = "telegram",
+    ) -> ToolResult:
+        """Set a new reminder (passive notify or active action)."""
         if not message:
             return ToolResult(success=False, error="Reminder message is required")
         if not remind_at:
@@ -132,8 +159,11 @@ class ReminderTool(BaseTool):
             "message": message,
             "remind_at": remind_dt.isoformat(),
             "created_at": now.isoformat(),
-            "status": "pending"
+            "status": "pending",
+            "channel": channel or "telegram",
         }
+        if action_goal and action_goal.strip():
+            reminder["action_goal"] = action_goal.strip()
 
         # Save
         reminders = self._load_reminders()
@@ -141,12 +171,13 @@ class ReminderTool(BaseTool):
         self._save_reminders(reminders)
 
         formatted_time = remind_dt.strftime("%Y-%m-%d %H:%M")
-        logger.info(f"Reminder set: {rid} — '{message}' at {formatted_time}")
+        kind = "action" if reminder.get("action_goal") else "notification"
+        logger.info(f"Reminder set ({kind}): {rid} — '{message}' at {formatted_time}")
 
         return ToolResult(
             success=True,
-            output=f"Reminder set for {formatted_time}: {message} (ID: {rid})",
-            metadata={"reminder_id": rid, "remind_at": remind_dt.isoformat()}
+            output=f"{'Action reminder' if reminder.get('action_goal') else 'Reminder'} set for {formatted_time}: {message} (ID: {rid})",
+            metadata={"reminder_id": rid, "remind_at": remind_dt.isoformat(), "has_action": bool(reminder.get("action_goal"))}
         )
 
     def _list_reminders(self) -> ToolResult:
@@ -169,7 +200,8 @@ class ReminderTool(BaseTool):
                 time_str = dt.strftime("%Y-%m-%d %H:%M")
             except (ValueError, KeyError):
                 time_str = r.get("remind_at", "unknown")
-            lines.append(f"{i}. [{r['id']}] {time_str} — {r.get('message', 'No message')}")
+            kind = " [ACTION]" if r.get("action_goal") else ""
+            lines.append(f"{i}. [{r['id']}]{kind} {time_str} — {r.get('message', 'No message')}")
 
         return ToolResult(
             success=True,

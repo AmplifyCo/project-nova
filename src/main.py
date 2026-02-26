@@ -578,7 +578,12 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
         logger.info("Keeping process alive for systemd service...")
 
         # Start reminder scheduler background task
-        reminder_scheduler = ReminderScheduler(telegram=telegram, data_dir="./data")
+        # Pass task_queue so action reminders (post, send, call, etc.) are executed, not just notified
+        reminder_scheduler = ReminderScheduler(
+            telegram=telegram,
+            data_dir="./data",
+            task_queue=_task_queue if '_task_queue' in vars() else None,
+        )
         reminder_task = asyncio.create_task(reminder_scheduler.start())
 
         # Start self-healing monitor background task

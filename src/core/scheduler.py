@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from .timezone import USER_TZ
 
 logger = logging.getLogger(__name__)
@@ -14,22 +14,28 @@ logger = logging.getLogger(__name__)
 class ReminderScheduler:
     """Background scheduler that checks for due reminders and fires them.
 
+    Two reminder modes:
+    - Passive (no action_goal): sends a Telegram notification only.
+    - Active (has action_goal): enqueues the goal as a background task via TaskQueue
+      so Nova actually executes the action (post, send, call, etc.) at the right time.
+
     Runs as an asyncio task alongside dashboard and auto_updater.
     Reads the same data/reminders.json that ReminderTool writes to.
-    Sends notifications via TelegramNotifier.
     """
 
     CHECK_INTERVAL = 30  # seconds between checks
     CLEANUP_AFTER_DAYS = 30  # remove fired/cancelled reminders older than this
 
-    def __init__(self, telegram, data_dir: str = "./data"):
+    def __init__(self, telegram, data_dir: str = "./data", task_queue=None):
         """Initialize reminder scheduler.
 
         Args:
             telegram: TelegramNotifier instance for sending reminder notifications
             data_dir: Directory where reminders.json lives
+            task_queue: TaskQueue instance for enqueuing action reminders (optional)
         """
         self.telegram = telegram
+        self.task_queue = task_queue
         self.reminders_file = Path(data_dir) / "reminders.json"
         self._cleanup_counter = 0
 
@@ -72,19 +78,40 @@ class ReminderScheduler:
                 continue
 
             if remind_at <= now:
-                # Fire this reminder
                 message = reminder.get("message", "Reminder")
+                action_goal = reminder.get("action_goal", "")
+                channel = reminder.get("channel", "telegram")
                 rid = reminder.get("id", "?")
 
                 try:
-                    await self.telegram.notify(
-                        f"⏰ *Reminder:* {message}",
-                        level="info"
-                    )
-                    logger.info(f"Fired reminder {rid}: {message}")
+                    if action_goal and self.task_queue:
+                        # Active reminder — enqueue task and notify
+                        task_id = self.task_queue.enqueue(
+                            goal=action_goal,
+                            channel=channel,
+                        )
+                        await self.telegram.notify(
+                            f"⏰ *Scheduled action starting:* {message}\n_Nova is now executing this task._",
+                            level="info"
+                        )
+                        logger.info(f"Fired action reminder {rid}: enqueued task {task_id} — {action_goal[:80]}")
+                    elif action_goal and not self.task_queue:
+                        # action_goal set but no task_queue wired — fall back to notification + warn
+                        await self.telegram.notify(
+                            f"⏰ *Reminder:* {message}\n⚠️ _Could not execute action automatically — task queue unavailable._",
+                            level="warning"
+                        )
+                        logger.warning(f"Action reminder {rid} fired but task_queue not available — notified only")
+                    else:
+                        # Passive reminder — notify only
+                        await self.telegram.notify(
+                            f"⏰ *Reminder:* {message}",
+                            level="info"
+                        )
+                        logger.info(f"Fired reminder {rid}: {message}")
                 except Exception as e:
-                    logger.error(f"Failed to send reminder {rid}: {e}")
-                    continue  # Don't mark as fired if notification failed
+                    logger.error(f"Failed to fire reminder {rid}: {e}")
+                    continue  # Don't mark as fired if it failed
 
                 reminder["status"] = "fired"
                 reminder["fired_at"] = now.isoformat()
