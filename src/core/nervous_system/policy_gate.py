@@ -70,6 +70,9 @@ TOOL_RISK_MAP: Dict[str, Dict[str, RiskLevel]] = {
         "_default": RiskLevel.READ,
     },
     "linkedin": {
+        "post_text": RiskLevel.IRREVERSIBLE,
+        "post_article": RiskLevel.IRREVERSIBLE,
+        "delete_post": RiskLevel.IRREVERSIBLE,
         "_default": RiskLevel.WRITE,
     },
     "send_whatsapp_message": {
@@ -92,21 +95,38 @@ class PolicyGate:
     2. Rate limiting per tool (prevent runaway tool calls)
     3. Argument validation
     4. Logging all write/irreversible actions
+    5. Blocking IRREVERSIBLE actions unless explicitly bypassed
 
-    Note: Does NOT block execution by default — logs and warns.
-    Approval-required mode can be enabled per tool for production hardening.
+    Irreversible actions (social media posts, emails, deletes) are BLOCKED
+    by default. The TaskRunner sets bypass=True for background tasks (user
+    already approved by queuing the task).
     """
 
-    def __init__(self, require_approval_for_irreversible: bool = False):
+    def __init__(self, require_approval_for_irreversible: bool = True):
         """Initialize policy gate.
 
         Args:
             require_approval_for_irreversible: If True, block irreversible actions
-                until explicit user approval (future enhancement via Telegram prompt)
+                unless bypass is active (TaskRunner sets bypass for queued tasks).
         """
         self.require_approval = require_approval_for_irreversible
+        self._bypass_active = False  # TaskRunner sets True during subtask execution
         self._tool_call_counts: Dict[str, int] = {}
         self._max_calls_per_run = 20  # Safety: max tool calls per agent run
+
+    def set_bypass(self, active: bool):
+        """Enable/disable bypass for pre-approved execution (TaskRunner).
+
+        The TaskRunner sets bypass=True before executing a subtask and
+        False after. This allows IRREVERSIBLE actions in background tasks
+        (user already approved by queuing) while blocking them in direct
+        conversation (where the agent might over-execute).
+        """
+        self._bypass_active = active
+        if active:
+            logger.info("POLICY GATE: bypass enabled (pre-approved execution)")
+        else:
+            logger.debug("POLICY GATE: bypass disabled")
 
     def check(
         self,
@@ -140,12 +160,26 @@ class PolicyGate:
 
         # 3. Log write/irreversible actions
         if risk == RiskLevel.IRREVERSIBLE:
-            logger.warning(
-                f"[{trace_id}] POLICY GATE: IRREVERSIBLE action — "
-                f"tool={tool_name}, operation={operation}, params={self._safe_params(params)}"
-            )
-            if self.require_approval:
-                return False, f"Irreversible action '{tool_name}.{operation}' requires user approval"
+            if self._bypass_active:
+                logger.info(
+                    f"[{trace_id}] POLICY GATE: IRREVERSIBLE action ALLOWED (bypass active) — "
+                    f"tool={tool_name}, operation={operation}"
+                )
+            elif self.require_approval:
+                logger.warning(
+                    f"[{trace_id}] POLICY GATE BLOCKED: IRREVERSIBLE action — "
+                    f"tool={tool_name}, operation={operation}, params={self._safe_params(params)}"
+                )
+                return False, (
+                    f"Irreversible action '{tool_name}.{operation}' blocked by policy gate. "
+                    f"This action cannot be performed during a conversation — it must be "
+                    f"queued as a background task so the user has approved it."
+                )
+            else:
+                logger.warning(
+                    f"[{trace_id}] POLICY GATE: IRREVERSIBLE action — "
+                    f"tool={tool_name}, operation={operation}, params={self._safe_params(params)}"
+                )
 
         elif risk == RiskLevel.WRITE:
             logger.info(

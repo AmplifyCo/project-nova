@@ -957,8 +957,10 @@ class ConversationManager:
             # to ONLY those tools + safe read-only helpers. This prevents the
             # agent from over-executing (e.g. posting to LinkedIn when asked
             # about task status).
+            # NOTE: nova_task is always available so the agent can queue
+            # irreversible actions that the policy gate blocks in conversation.
             tool_hints = intent.get("tool_hints", [])
-            _SAFE_READONLY_TOOLS = {"file_operations", "web_search", "web_fetch", "clock", "reminder"}
+            _SAFE_READONLY_TOOLS = {"file_operations", "web_search", "web_fetch", "clock", "reminder", "nova_task"}
             if tool_hints:
                 allowed_tools = list(set(tool_hints) | _SAFE_READONLY_TOOLS)
                 logger.info(f"Tool scope restricted to: {allowed_tools}")

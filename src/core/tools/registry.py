@@ -40,7 +40,9 @@ class ToolRegistry:
         self._consecutive_failure_limit = 5  # auto-disable after N consecutive failures
 
         # Policy Gate (Nervous System) — risk checks before tool execution
-        self.policy_gate = PolicyGate()
+        # require_approval=True blocks IRREVERSIBLE actions (social posts, emails)
+        # unless bypass is active (TaskRunner sets bypass for pre-approved tasks)
+        self.policy_gate = PolicyGate(require_approval_for_irreversible=True)
 
         # Get safety config
         safety_config = self.config.get('safety', {})

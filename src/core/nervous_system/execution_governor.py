@@ -48,7 +48,7 @@ class ExecutionGovernor:
             data_dir: Directory for persistent storage (DLQ, outbox)
             telegram_notifier: Optional notifier forwarded to DLQ for dead-letter alerts
         """
-        self.policy_gate = PolicyGate()
+        self.policy_gate = PolicyGate(require_approval_for_irreversible=True)
         self.dlq = DeadLetterQueue(data_dir=data_dir, telegram_notifier=telegram_notifier)
         self.outbox = DurableOutbox(data_dir=data_dir)
         self.state_machine = AgentStateMachine()

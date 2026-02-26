@@ -435,14 +435,20 @@ class TaskRunner:
 
         for attempt in range(self.MAX_SUBTASK_RETRIES):
             try:
-                # #1: just-in-time tool access — scope tools to this subtask's hints
-                result = await self.agent.run(
-                    task=task_prompt,
-                    model_tier=model_tier,
-                    max_iterations=8,  # generous for research tasks
-                    allowed_tools=subtask.tool_hints if subtask.tool_hints else None,
-                )
-                return result or "Step completed (no output)"
+                # Enable policy gate bypass — TaskRunner tasks are pre-approved by user
+                self.agent.tools.policy_gate.set_bypass(True)
+                try:
+                    # #1: just-in-time tool access — scope tools to this subtask's hints
+                    result = await self.agent.run(
+                        task=task_prompt,
+                        model_tier=model_tier,
+                        max_iterations=8,  # generous for research tasks
+                        allowed_tools=subtask.tool_hints if subtask.tool_hints else None,
+                    )
+                    return result or "Step completed (no output)"
+                finally:
+                    # Always re-disable bypass after subtask completes
+                    self.agent.tools.policy_gate.set_bypass(False)
             except Exception as e:
                 error_str = str(e)
                 if attempt < self.MAX_SUBTASK_RETRIES - 1:
