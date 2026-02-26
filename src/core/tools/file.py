@@ -229,7 +229,7 @@ class FileTool(BaseTool):
             FileTool._ALLOWED_WRITE_ROOTS = [
                 project_root,
                 "/tmp",
-                os.path.expanduser("~/project-nova"),  # deployment path
+                os.path.expanduser("~/novabot"),  # deployment path
             ]
 
         try:

@@ -311,8 +311,8 @@ Risk and supervision are formally documented in [`RISKS.md`](../RISKS.md) and [`
 ### Installation
 
 ```bash
-git clone https://github.com/AmplifyCo/project-nova.git
-cd project-nova
+git clone https://github.com/AmplifyCo/novabot.git
+cd novabot
 
 python -m venv venv
 source venv/bin/activate
@@ -389,8 +389,8 @@ Nova starts and connects to Telegram. Send it a message to begin.
 ssh -i your-key.pem ec2-user@your-instance-ip
 
 # Clone and install
-git clone https://github.com/AmplifyCo/project-nova.git
-cd project-nova
+git clone https://github.com/AmplifyCo/novabot.git
+cd novabot
 pip install -r requirements.txt
 
 # Configure
@@ -426,8 +426,8 @@ No code changes are needed — Nova runs natively on macOS (Apple Silicon and In
 ### Install
 
 ```bash
-git clone https://github.com/AmplifyCo/project-nova.git
-cd project-nova
+git clone https://github.com/AmplifyCo/novabot.git
+cd novabot
 
 python3 -m venv venv
 source venv/bin/activate
@@ -461,7 +461,7 @@ python src/main.py
 launchd doesn't source `.env` files, so use a small shell script that loads it first:
 
 ```bash
-cat > ~/project-nova/start_nova.sh << 'EOF'
+cat > ~/novabot/start_nova.sh << 'EOF'
 #!/bin/bash
 set -a
 source "$(dirname "$0")/.env"
@@ -469,7 +469,7 @@ set +a
 exec "$(dirname "$0")/venv/bin/python" "$(dirname "$0")/src/main.py"
 EOF
 
-chmod +x ~/project-nova/start_nova.sh
+chmod +x ~/novabot/start_nova.sh
 ```
 
 **Step 2 — Create the launchd plist**
@@ -477,7 +477,7 @@ chmod +x ~/project-nova/start_nova.sh
 Replace `YOUR_USERNAME` with the output of `whoami` and adjust the path if you cloned elsewhere:
 
 ```bash
-mkdir -p ~/project-nova/logs
+mkdir -p ~/novabot/logs
 
 cat > ~/Library/LaunchAgents/com.nova.digitalclone.plist << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -490,11 +490,11 @@ cat > ~/Library/LaunchAgents/com.nova.digitalclone.plist << 'EOF'
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/YOUR_USERNAME/project-nova/start_nova.sh</string>
+        <string>/Users/YOUR_USERNAME/novabot/start_nova.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/YOUR_USERNAME/project-nova</string>
+    <string>/Users/YOUR_USERNAME/novabot</string>
 
     <!-- Start automatically on login -->
     <key>RunAtLoad</key>
@@ -509,10 +509,10 @@ cat > ~/Library/LaunchAgents/com.nova.digitalclone.plist << 'EOF'
     <integer>10</integer>
 
     <key>StandardOutPath</key>
-    <string>/Users/YOUR_USERNAME/project-nova/logs/nova.log</string>
+    <string>/Users/YOUR_USERNAME/novabot/logs/nova.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/YOUR_USERNAME/project-nova/logs/nova_error.log</string>
+    <string>/Users/YOUR_USERNAME/novabot/logs/nova_error.log</string>
 </dict>
 </plist>
 EOF
@@ -535,12 +535,12 @@ Nova is now running and will restart automatically on login or if it crashes.
 | **Restart** | `launchctl kickstart -k gui/$(id -u)/com.nova.digitalclone` | `sudo systemctl restart digital-twin` |
 | **Status** | `launchctl list \| grep nova` | `sudo systemctl status digital-twin` |
 | **Enable on boot** | `RunAtLoad: true` in plist (already set above) | `sudo systemctl enable digital-twin` |
-| **Logs (live)** | `tail -f ~/project-nova/logs/nova.log` | `journalctl -u digital-twin -f` |
+| **Logs (live)** | `tail -f ~/novabot/logs/nova.log` | `journalctl -u digital-twin -f` |
 
 ### Update on Mac
 
 ```bash
-cd ~/project-nova
+cd ~/novabot
 git pull
 source venv/bin/activate
 pip install -r requirements.txt
