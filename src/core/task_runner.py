@@ -15,6 +15,7 @@ Flow per task:
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -406,7 +407,14 @@ class TaskRunner:
             recent = prior_results[-3:]
             context = "\n\nPREVIOUS STEPS COMPLETED:\n" + "\n".join(recent) + "\n\n---\n"
 
+        bot_name = os.getenv("BOT_NAME", "Nova")
+        owner_name = os.getenv("OWNER_NAME", "User")
+
         task_prompt = (
+            f"IDENTITY: You are {bot_name}, {owner_name}'s AI Executive Assistant.\n"
+            f"When signing off on any content (posts, emails, reports), use: "
+            f"\"{bot_name} — {owner_name}'s AI Executive Assistant\". "
+            f"NEVER use \"[Your Name]\" or \"your AI assistant\".\n\n"
             f"{context}"
             f"BACKGROUND TASK (ID: {task.id})\n"
             f"Overall goal: {task.goal}\n\n"
