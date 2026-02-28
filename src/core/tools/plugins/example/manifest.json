@@ -1,0 +1,15 @@
+{
+    "name": "example_plugin",
+    "version": "1.0",
+    "description": "Example plugin to verify the plugin system works",
+    "class_name": "ExampleTool",
+    "module_file": "tool.py",
+    "risk_map": {
+        "_default": "read"
+    },
+    "env_vars": [],
+    "constructor_args": {},
+    "safe_readonly": true,
+    "persona": null,
+    "dependencies": []
+}

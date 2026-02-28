@@ -601,6 +601,12 @@ class ConversationManager:
                 logger.info(f"[{trace_id}] Task interrupt handled")
                 return interrupt_response
 
+            # ── Admin: hot-reload plugins ──────────────────────────────
+            reload_response = await self._handle_plugin_reload(message)
+            if reload_response:
+                logger.info(f"[{trace_id}] Plugin reload handled")
+                return reload_response
+
             # ── Quick task status check: "did the LinkedIn post go through?" ──
             status_response = self._handle_task_status_query(message)
             if status_response:
@@ -1218,6 +1224,10 @@ class ConversationManager:
             # irreversible actions that the policy gate blocks in conversation.
             tool_hints = intent.get("tool_hints", [])
             _SAFE_READONLY_TOOLS = {"file_operations", "web_search", "web_fetch", "clock", "reminder", "nova_task", "memory_query"}
+            # Extend with plugin tools marked safe_readonly in their manifest
+            for pname, pmeta in self.agent.tools.get_plugin_metadata().items():
+                if pmeta.get("safe_readonly"):
+                    _SAFE_READONLY_TOOLS.add(pname)
             if tool_hints:
                 allowed_tools = list(set(tool_hints) | _SAFE_READONLY_TOOLS)
                 logger.info(f"Tool scope restricted to: {allowed_tools}")
@@ -2160,6 +2170,32 @@ Additional Examples for Background:
     _TASK_KEYWORD_MODIFY_PATTERNS = [
         r"\b(?:modify|change|update|edit|adjust|reschedule)\s+(?:the\s+)?(.+?)\s+task\s+(?:to\s+)?(.+)",
     ]
+
+    # Plugin reload phrases
+    _PLUGIN_RELOAD_PATTERNS = [
+        r"\breload\s+plugin",
+        r"\brefresh\s+plugin",
+        r"\breload\s+tool",
+        r"\brefresh\s+tool",
+        r"\bhot[\s-]?reload",
+    ]
+
+    async def _handle_plugin_reload(self, message: str) -> Optional[str]:
+        """Handle 'reload plugins' admin command.
+
+        Waits for in-flight tool executions to drain, then reloads all plugins.
+        Returns response string if handled, None otherwise.
+        """
+        msg_lower = message.lower().strip()
+        if not any(re.search(p, msg_lower) for p in self._PLUGIN_RELOAD_PATTERNS):
+            return None
+
+        if not hasattr(self.agent, 'tools') or not hasattr(self.agent.tools, 'reload_plugins'):
+            return "Plugin system not available."
+
+        logger.info("Admin command: reloading plugins...")
+        result = await self.agent.tools.reload_plugins()
+        return f"Done. {result}"
 
     # Generic words that should fall through to cancel-all instead of keyword search
     _GENERIC_TASK_WORDS = {"all", "every", "everything", "current", "background", "that", "this", "my", "the"}

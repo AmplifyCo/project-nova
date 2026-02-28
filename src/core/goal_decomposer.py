@@ -61,12 +61,14 @@ class GoalDecomposer:
     Falls back gracefully to a 2-step default if Gemini is unavailable.
     """
 
-    def __init__(self, gemini_client=None, template_library=None):
+    def __init__(self, gemini_client=None, template_library=None, extra_tool_names=None):
         """
         Args:
             gemini_client: GeminiClient (LiteLLM wrapper). If None, uses fallback decomposition.
             template_library: ReasoningTemplateLibrary for reusing past decompositions.
+            extra_tool_names: Additional tool names from plugins (auto-discovered).
         """
+        self._extra_tool_names = set(extra_tool_names or [])
         self.gemini_client = gemini_client
         self.template_library = template_library
         self._model = "gemini/gemini-2.0-flash"
@@ -160,6 +162,7 @@ class GoalDecomposer:
         "bash", "file_operations", "web_search", "web_fetch", "browser",
         "email", "calendar", "x_tool", "reminder", "nova_task", "contacts",
         "linkedin", "send_whatsapp_message", "make_phone_call", "clock",
+        "polymarket", "memory_query",
     }
     _VALID_MODEL_TIERS = {"flash", "haiku", "sonnet", "opus"}
     _MAX_DESCRIPTION_LENGTH = 500  # Cap to prevent prompt injection via long descriptions
@@ -193,7 +196,8 @@ class GoalDecomposer:
                 desc = desc[:self._MAX_DESCRIPTION_LENGTH]
                 # Sanitize: only allow registered tool names
                 raw_hints = item.get("tool_hints", [])
-                valid_hints = [h for h in raw_hints if h in self._VALID_TOOL_NAMES]
+                all_valid = self._VALID_TOOL_NAMES | self._extra_tool_names
+                valid_hints = [h for h in raw_hints if h in all_valid]
                 # Sanitize: validate model tier
                 tier = item.get("model_tier", "flash")
                 if tier not in self._VALID_MODEL_TIERS:

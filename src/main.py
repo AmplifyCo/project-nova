@@ -395,7 +395,11 @@ Models: Claude Opus/Sonnet/Haiku + SmolLM2 (local fallback)"""
             # ── Autonomy Stack: Persistent Tasks + Background Execution ───────
             logger.info("🎯 Initializing autonomy stack (TaskQueue + GoalDecomposer + TaskRunner)...")
             task_queue = TaskQueue(data_dir="./data")
-            goal_decomposer = GoalDecomposer(gemini_client=gemini_client)
+            plugin_names = list(agent.tools.get_plugin_metadata().keys())
+            goal_decomposer = GoalDecomposer(
+                gemini_client=gemini_client,
+                extra_tool_names=plugin_names,
+            )
 
             # Wire task_queue into ConversationManager (background task detection)
             conversation_manager.task_queue = task_queue

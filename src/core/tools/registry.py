@@ -44,6 +44,17 @@ class ToolRegistry:
         # unless bypass is active (TaskRunner sets bypass for pre-approved tasks)
         self.policy_gate = PolicyGate(require_approval_for_irreversible=True)
 
+        # Hot-reload safety:
+        # _plugins_ready: normally set — tool calls proceed immediately.
+        #   Reload clears it → new tool calls hold (await) instead of failing.
+        #   In-flight calls finish naturally, then reload swaps, then sets it again.
+        # _active_executions + _all_idle: lets reload wait for in-flight drain.
+        self._plugins_ready = asyncio.Event()
+        self._plugins_ready.set()  # normal state: tools can execute
+        self._active_executions = 0
+        self._all_idle = asyncio.Event()
+        self._all_idle.set()  # starts idle
+
         # Get safety config
         safety_config = self.config.get('safety', {})
 
@@ -77,6 +88,13 @@ class ToolRegistry:
         # ── Market Data Tools (always available, no auth) ───────────────────
         self._register_polymarket_tool()
 
+        # ── Plugin Tools (auto-discovered from plugins/ directory) ─────────
+        # Drop a folder into plugins/ with tool.py + manifest.json → auto-loaded.
+        # Zero hub edits needed for new tools.
+        from .plugins.plugin_loader import PluginLoader
+        self._plugin_loader = PluginLoader()
+        self._plugin_loader.load_all(self)
+
     def register(self, tool: BaseTool):
         """Register a tool.
 
@@ -85,6 +103,21 @@ class ToolRegistry:
         """
         self.tools[tool.name] = tool
         logger.info(f"Registered tool: {tool.name}")
+
+    def unregister(self, name: str) -> bool:
+        """Unregister a tool by name. Used by hot-reload to swap out plugin tools.
+
+        Args:
+            name: Tool name to remove
+
+        Returns:
+            True if the tool was found and removed
+        """
+        if name in self.tools:
+            del self.tools[name]
+            logger.info(f"Unregistered tool: {name}")
+            return True
+        return False
 
     def get_tool(self, name: str) -> Optional[BaseTool]:
         """Get tool by name.
@@ -172,6 +205,27 @@ class ToolRegistry:
         Returns:
             ToolResult from tool execution
         """
+        # Hold if a hot-reload is in progress — wait (not fail) until it's done
+        await self._plugins_ready.wait()
+
+        # Track active executions so reload can wait for in-flight drain
+        self._active_executions += 1
+        self._all_idle.clear()
+        try:
+            return await self._execute_tool_inner(tool_name, user_message, llm_client, **params)
+        finally:
+            self._active_executions -= 1
+            if self._active_executions == 0:
+                self._all_idle.set()
+
+    async def _execute_tool_inner(
+        self,
+        tool_name: str,
+        user_message: str = "",
+        llm_client=None,
+        **params
+    ) -> ToolResult:
+        """Inner tool execution (separated for reload-lock wrapping)."""
         tool = self.get_tool(tool_name)
         if not tool:
             logger.error(f"Tool not found: {tool_name}")
@@ -490,6 +544,58 @@ class ToolRegistry:
             logger.info("🧠 MemoryQuery tool registered")
         except Exception as e:
             logger.warning(f"Failed to register MemoryQuery tool: {e}")
+
+    def get_plugin_metadata(self) -> dict:
+        """Return metadata for all loaded plugins.
+
+        Used by ConversationManager (dynamic _SAFE_READONLY_TOOLS),
+        GoalDecomposer (dynamic _VALID_TOOL_NAMES), and persona detection.
+        """
+        if hasattr(self, '_plugin_loader'):
+            return self._plugin_loader.get_plugin_metadata()
+        return {}
+
+    async def reload_plugins(self) -> str:
+        """Hot-reload all plugins: hold new tasks, drain in-flight, reload.
+
+        Flow:
+          1. Clear _plugins_ready → new tool calls hold (await), not fail
+          2. Wait for in-flight executions to finish naturally
+          3. Swap plugins (unload old, load fresh)
+          4. Set _plugins_ready → held calls proceed with new plugins
+
+        Returns:
+            Human-readable summary of what happened.
+        """
+        if not hasattr(self, '_plugin_loader'):
+            return "Plugin system not initialized."
+
+        # Step 1: hold new tool calls
+        self._plugins_ready.clear()
+
+        try:
+            # Step 2: wait for in-flight executions to drain
+            if self._active_executions > 0:
+                logger.info(f"Reload: waiting for {self._active_executions} active tool execution(s) to finish...")
+                await self._all_idle.wait()
+
+            # Step 3: all clear — reload plugins
+            new, reloaded, errors = self._plugin_loader.reload_all(self)
+        finally:
+            # Step 4: release held calls (even if reload errors out)
+            self._plugins_ready.set()
+
+        parts = []
+        if new:
+            parts.append(f"{new} new")
+        if reloaded:
+            parts.append(f"{reloaded} reloaded")
+        if not parts:
+            parts.append("no changes")
+        summary = f"Plugins: {', '.join(parts)}."
+        if errors:
+            summary += f" Errors: {'; '.join(errors)}"
+        return summary
 
     def set_task_queue(self, task_queue):
         """Inject task_queue into NovaTaskTool after initialization."""
