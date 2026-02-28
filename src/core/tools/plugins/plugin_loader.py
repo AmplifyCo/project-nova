@@ -212,7 +212,7 @@ class PluginLoader:
 
         # Remove from PolicyGate TOOL_RISK_MAP
         try:
-            from ..nervous_system.policy_gate import TOOL_RISK_MAP
+            from src.core.nervous_system.policy_gate import TOOL_RISK_MAP
             TOOL_RISK_MAP.pop(name, None)
         except ImportError:
             pass
@@ -305,7 +305,7 @@ class PluginLoader:
     @staticmethod
     def _apply_risk_map(manifest: PluginManifest):
         """Inject plugin's risk classification into PolicyGate's TOOL_RISK_MAP."""
-        from ..nervous_system.policy_gate import TOOL_RISK_MAP, RiskLevel
+        from src.core.nervous_system.policy_gate import TOOL_RISK_MAP, RiskLevel
 
         level_map = {
             "read": RiskLevel.READ,
