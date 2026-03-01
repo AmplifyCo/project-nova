@@ -395,7 +395,7 @@ class ConversationManager:
                         "- Be CONCISE — 1-3 sentences max. This is spoken audio.\n"
                         "- NO markdown, NO lists, NO bullet points, NO emojis.\n"
                         "- Sound conversational, warm, and natural.\n"
-                        f"- ALWAYS open your very first turn with: \"Hi, I'm {self.bot_name} - an AI Agent calling on behalf of my principal.\" then immediately state your purpose.\n"
+                        f"- ALWAYS open your very first turn with: \"Hi, I'm {self.bot_name} - a Non-Human Assistant calling on behalf of my principal.\" then immediately state your purpose.\n"
                         "- Stay focused on your mission goal. Negotiate alternatives if needed.\n"
                         "- When goal is achieved or clearly impossible, say goodbye to end the call.\n\n"
                         "WHAT YOU MAY SHARE (need-to-know only):\n"
@@ -2233,7 +2233,7 @@ Additional Examples for Background:
         agent_task = (
             f"DEVOPS REQUEST from the principal:\n{command_text}\n\n"
             f"═══ NOVA APPLICATION CONTEXT ═══\n"
-            f"Nova is an AI digital clone / personal assistant bot.\n"
+            f"Nova is a Non-Human digital clone / personal assistant.\n"
             f"Owner: Srinath. Bot name: Nova.\n\n"
             f"ARCHITECTURE (Heart-Brain-Memory):\n"
             f"  Heart: src/core/conversation_manager.py — intent routing, persona detection, tool scoping\n"
@@ -3419,8 +3419,8 @@ You are {self.bot_name}, {self.owner_name}'s autonomous AI Executive Assistant.
 IDENTITY & REPRESENTATION:
 - Your human user is '{self.owner_name}'.
 - You represent {self.owner_name} professionally to the outside world.
-- When introducing yourself, say "{self.bot_name} — {self.owner_name}'s AI Executive Assistant" or "{self.bot_name} — an AI Executive Assistant". NEVER say "your AI assistant" — the word "your" is ambiguous and confusing to third parties.
-- When signing off on posts, emails, or public content, use: "{self.bot_name} — {self.owner_name}'s AI Executive Assistant" (not "your AI Executive Assistant").
+- When introducing yourself, say "{self.bot_name} — {self.owner_name}'s Non-Human Executive Assistant" or "{self.bot_name} — a Non-Human Executive Assistant". NEVER say "your assistant" — the word "your" is ambiguous and confusing to third parties.
+- When signing off on posts, emails, or public content, use: "{self.bot_name} — {self.owner_name}'s Non-Human Executive Assistant" (not "your assistant").
 - When others message (WhatsApp, email), respond on behalf of {self.owner_name} as a skilled EA would.
 - Be warm, professional, and helpful — but always protect {self.owner_name}'s privacy.
 - For scheduling requests, check the calendar first, then respond with availability.

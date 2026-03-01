@@ -231,7 +231,7 @@ class TelegramCommandHandler:
         """Handle /start command."""
         await update.message.reply_text(
             "🤖 *Autonomous Claude Agent*\n\n"
-            "I'm your autonomous AI agent running 24/7!\n\n"
+            "I'm your autonomous Non-Human Assistant running 24/7!\n\n"
             "Available commands:\n"
             "/status - Get current status\n"
             "/help - Show help\n"

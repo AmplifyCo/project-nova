@@ -474,9 +474,9 @@ class TaskRunner:
         bot_name = os.getenv("BOT_NAME", "Nova")
         owner_name = os.getenv("OWNER_NAME", "User")
 
-        signature = f"{bot_name} — {owner_name}'s AI Assistant"
+        signature = f"{bot_name} — {owner_name}'s Non-Human Executive Assistant"
         task_prompt = (
-            f"IDENTITY: You are {bot_name}, {owner_name}'s AI Assistant.\n"
+            f"IDENTITY: You are {bot_name}, {owner_name}'s Non-Human Executive Assistant.\n"
             f"SIGNATURE RULE (MANDATORY): When signing off on any content "
             f"(LinkedIn posts, tweets, emails, reports), you MUST sign as:\n"
             f"  {signature}\n"
