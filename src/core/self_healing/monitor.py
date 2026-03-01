@@ -85,11 +85,14 @@ class SelfHealingMonitor:
         self.last_check = datetime.now()
         logger.info("Running health check...")
 
-        # Scan for recent errors (never before startup — avoids re-detecting pre-restart errors)
+        # Scan for errors since last check (or startup), advancing watermark each time
+        # so the same errors are never reported twice
+        scan_floor = self._last_scan_time if hasattr(self, '_last_scan_time') else self.startup_time
         errors = self.detector.scan_recent_logs(
             minutes=self.check_interval // 60,
-            not_before=self.startup_time
+            not_before=scan_floor
         )
+        self._last_scan_time = datetime.now()
 
         if errors:
             logger.warning(f"⚠️ Detected {len(errors)} errors")
